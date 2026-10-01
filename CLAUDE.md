@@ -14,6 +14,7 @@ Home connection monitor (Linux, Portuguese UI/comments/identifiers). Two standal
 All via `make` (run `make help` for the list). Python is pinned to `/usr/bin/python3`.
 
 - `make test` — runs the `unittest` suite in `tests/` (no network, Docker or real DB).
+- `make hooks` — once per clone: sets `core.hooksPath=.githooks`, so the versioned `pre-push` hook runs `make test` and blocks the push on failure (`--no-verify` skips).
 - `make run` — monitor in foreground. `make web` — dashboard in foreground.
 - `make start` / `stop` / `restart` / `status` / `logs` — monitor in Docker (`docker compose`, container `ping-check`, `restart: unless-stopped`). Only the monitor runs in the container; the dashboard still runs on the host via `make web`.
 - `make summary` / `outages` / `last` — ad-hoc SQL reports via the `$(SQL)` one-liner in the Makefile (no `sqlite3` CLI needed). Add new reports the same way.
