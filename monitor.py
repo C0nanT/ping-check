@@ -13,7 +13,6 @@ import concurrent.futures as cf
 import os
 import re
 import signal
-import socket
 import sqlite3
 import subprocess
 import sys
@@ -27,6 +26,7 @@ PING_SPACING = 0.2      # s entre pacotes
 PING_TIMEOUT = 1        # s de espera por resposta
 DNS_HOST = "google.com"
 DNS_TIMEOUT = 3
+DNS_CMD = ["getent", "ahosts"]   # + DNS_HOST; resolve via NSS, como os programas do sistema
 WIFI_INFO_EVERY = 60
 INTERNET_TARGETS = {"cf": "1.1.1.1", "google": "8.8.8.8"}
 
@@ -120,13 +120,17 @@ def ping(host):
 
 
 def dns_check():
+    """Retorna (ok, ms). Subprocesso com timeout: no limite o filho é morto,
+    então nenhuma thread do pool fica presa numa resolução que não volta."""
     t0 = time.monotonic()
     try:
-        # getaddrinfo não tem timeout próprio; rodamos via executor com timeout
-        socket.getaddrinfo(DNS_HOST, 443, proto=socket.IPPROTO_TCP)
-        return 1, (time.monotonic() - t0) * 1000
+        r = subprocess.run(DNS_CMD + [DNS_HOST], capture_output=True, text=True,
+                           timeout=DNS_TIMEOUT)
     except Exception:
         return 0, None
+    if r.returncode != 0 or not r.stdout.strip():
+        return 0, None
+    return 1, (time.monotonic() - t0) * 1000
 
 
 def wifi_signal(iface):
@@ -209,7 +213,8 @@ def main():
         f_dns = pool.submit(dns_check)
         gw, cf_, gg = f_gw.result(), f_cf.result(), f_gg.result()
         try:
-            dns_ok, dns_ms = f_dns.result(timeout=DNS_TIMEOUT)
+            # dns_check já respeita DNS_TIMEOUT; a folga é só rede de segurança
+            dns_ok, dns_ms = f_dns.result(timeout=DNS_TIMEOUT + 1)
         except Exception:
             dns_ok, dns_ms = 0, None
         q, dbm = wifi_signal(iface)

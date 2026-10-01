@@ -1,5 +1,6 @@
 import importlib
 import os
+import time
 import unittest
 
 import monitor
@@ -101,6 +102,41 @@ class ClassifyTest(unittest.TestCase):
 
     def test_prioridade_dns_sobre_degradado(self):
         self.assertEqual(self.c(gw=p(25), dns=0), "falha_dns")
+
+
+class DnsCheckTest(unittest.TestCase):
+    def usa(self, *cmd):
+        # DNS_HOST é anexado ao final do comando; "sh -c 'script' _" o recebe como $1
+        antigo = monitor.DNS_CMD
+        monitor.DNS_CMD = list(cmd)
+        self.addCleanup(setattr, monitor, "DNS_CMD", antigo)
+
+    def test_timeout_devolve_falha_dentro_do_limite(self):
+        self.usa("sh", "-c", "exec sleep 30", "_")
+        monitor_timeout = monitor.DNS_TIMEOUT
+        self.addCleanup(setattr, monitor, "DNS_TIMEOUT", monitor_timeout)
+        monitor.DNS_TIMEOUT = 1
+        t0 = time.monotonic()
+        self.assertEqual(monitor.dns_check(), (0, None))
+        self.assertLess(time.monotonic() - t0, monitor.DNS_TIMEOUT + 1)
+
+    def test_sucesso(self):
+        self.usa("sh", "-c", "echo '142.250.0.1 STREAM google.com'", "_")
+        ok, ms = monitor.dns_check()
+        self.assertEqual(ok, 1)
+        self.assertGreaterEqual(ms, 0)
+
+    def test_codigo_de_saida_diferente_de_zero(self):
+        self.usa("sh", "-c", "exit 2", "_")
+        self.assertEqual(monitor.dns_check(), (0, None))
+
+    def test_saida_vazia_com_codigo_zero_e_falha(self):
+        self.usa("true")
+        self.assertEqual(monitor.dns_check(), (0, None))
+
+    def test_comando_inexistente(self):
+        self.usa("/nao/existe")
+        self.assertEqual(monitor.dns_check(), (0, None))
 
 
 class ImportTest(unittest.TestCase):

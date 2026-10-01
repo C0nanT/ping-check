@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-testes-unitarios/01 (Monitor testável + `make test`)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Comando que dorme além do limite → `(0, None)` em menos de `DNS_TIMEOUT` + 1 s, sem processo pendurado
-- [ ] Comando que imprime um endereço e sai com 0 → `(1, ms)` com `ms` ≥ 0
-- [ ] Comando que sai com código ≠ 0 → `(0, None)`
-- [ ] Comentário enganoso sobre o executor corrigido
-- [ ] Funciona com `make run` e `make start` (Dockerfile sem mudanças)
-- [ ] `make test` passa
+- [x] Comando que dorme além do limite → `(0, None)` em menos de `DNS_TIMEOUT` + 1 s, sem processo pendurado
+- [x] Comando que imprime um endereço e sai com 0 → `(1, ms)` com `ms` ≥ 0
+- [x] Comando que sai com código ≠ 0 → `(0, None)`
+- [x] Comentário enganoso sobre o executor corrigido
+- [x] Funciona com `make run` e `make start` (Dockerfile sem mudanças)
+- [x] `make test` passa
