@@ -40,7 +40,7 @@ Só `journal_size_limit` não resolve: o WAL ainda chega a 4 MB antes de cada ch
 - O painel não muda: continua abrindo `mode=ro` e somando `-wal`/`-shm` em `banco.bytes`. Como o checkpoint fica mais frequente, `por_dia` (só o arquivo principal) também fica mais em dia.
 - Custo: o checkpoint passa de ~1 a cada 30 min para ~1 a cada 3 min, copiando ~400 KB por vez. É desprezível para um ciclo de 5 s.
 - Leitores do painel podem adiar um checkpoint enquanto leem. Como as consultas são curtas, o WAL só passa um pouco de 100 páginas de vez em quando. Aceitável.
-- Atualizar `CLAUDE.md` (seção Monitor/Schema) com uma linha sobre as pragmas e o motivo.
+- Atualizar `AGENTS.md` (seção Monitor/Schema) com uma linha sobre as pragmas e o motivo.
 
 ## Testing Decisions
 

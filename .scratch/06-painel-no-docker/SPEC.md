@@ -27,12 +27,12 @@ O painel vira um segundo serviço no `compose.yaml`, com a mesma imagem, iniciad
 
 - Novo serviço `painel` no compose, `image: ping-check` (a mesma do monitor, sem build próprio), `command` rodando o painel com Python sem buffer, `restart: unless-stopped`, `init: true`.
 - `network_mode: host`: o painel continua fazendo bind em 127.0.0.1 do host, sem publicar porta na rede.
-- Usuário: `user: "1000:1000"` **neste serviço** — ele não precisa de root nem de `systemd-inhibit`. A regra do `CLAUDE.md` "Don't add `user:` to compose" vale para o serviço `monitor`; deixar isso explícito no texto do `CLAUDE.md`.
+- Usuário: `user: "1000:1000"` **neste serviço** — ele não precisa de root nem de `systemd-inhibit`. A regra do `AGENTS.md` "Don't add `user:` to compose" vale para o serviço `monitor`; deixar isso explícito no texto do `AGENTS.md`.
 - Volumes: o mesmo bind mount do projeto (precisa ser leitura e escrita: um leitor SQLite em WAL usa o `-shm`) e `/etc/localtime` somente leitura. Sem socket D-Bus, sem `apparmor=unconfined`.
 - `PORT` repassado por `environment` com padrão 8080.
 - Healthcheck: requisição HTTP para `/api?min=1` com Python stdlib, intervalo de 30 s.
 - Makefile: `start`/`stop`/`restart`/`status`/`logs` já atuam no projeto compose inteiro; conferir que `logs` mostra os dois. `make web` mantém o comportamento; se a porta estiver em uso, o painel sai com uma mensagem em português sugerindo `make stop` ou outra `PORT`.
-- Atualizar a seção Docker e Commands do `CLAUDE.md` (hoje diz que só o monitor roda no container).
+- Atualizar a seção Docker e Commands do `AGENTS.md` (hoje diz que só o monitor roda no container).
 
 ## Testing Decisions
 

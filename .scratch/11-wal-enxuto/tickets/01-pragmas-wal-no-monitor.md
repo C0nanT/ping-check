@@ -13,5 +13,5 @@
 - [ ] Teste: as três pragmas têm os valores esperados numa conexão de `abrir_banco()`
 - [ ] Teste: muitos inserts com commit → `-wal` nunca passa de ~0,5 MB
 - [ ] Teste: banco antigo com WAL grande, reaberto por `abrir_banco()` → WAL encolhe depois de gravar
-- [ ] `CLAUDE.md` atualizado (uma linha sobre as pragmas e o motivo)
+- [ ] `AGENTS.md` atualizado (uma linha sobre as pragmas e o motivo)
 - [ ] `make test` passa

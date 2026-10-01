@@ -14,5 +14,5 @@
 - [x] Nunca dois testes ao mesmo tempo; timeout ~30 s por fase
 - [x] Erro (timeout, HTTP) vira linha com `erro`, sem derrubar o monitor
 - [x] Só stdlib (`urllib`)
-- [x] `make velocidade` aparece em `make help`; `VELOCIDADE_A_CADA` documentado no `CLAUDE.md`
+- [x] `make velocidade` aparece em `make help`; `VELOCIDADE_A_CADA` documentado no `AGENTS.md`
 - [x] `make test` passa

@@ -15,4 +15,4 @@
 - [x] `make logs` mostra os dois serviços
 - [x] `make web` com o container rodando sai com mensagem em português (porta ocupada → `make stop` ou outra `PORT`)
 - [x] Falha de um serviço não impede o outro de subir
-- [x] `CLAUDE.md` (Commands e Docker) atualizado; regra de não usar `user:` explicitada como regra do serviço `monitor`
+- [x] `AGENTS.md` (Commands e Docker) atualizado; regra de não usar `user:` explicitada como regra do serviço `monitor`
