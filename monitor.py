@@ -170,7 +170,9 @@ def classify(iface, gw, cf_, gg, dns_ok):
         return "falha_internet"
     if not dns_ok:
         return "falha_dns"
-    if gw["loss"] > 0 or inet_loss > 0 or (cf_["avg"] or 0) > 150:
+    avgs = [t["avg"] for t in (cf_, gg) if t["avg"] is not None]
+    lento = bool(avgs) and min(avgs) > 150
+    if gw["loss"] > 0 or inet_loss > 0 or lento:
         return "degradado"
     return "ok"
 

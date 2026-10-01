@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-testes-unitarios/01 (Monitor testável + `make test`)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Cloudflare 200 ms + Google 40 ms → `ok`
-- [ ] Os dois > 150 ms → `degradado`
-- [ ] Cloudflare sem média + Google 200 ms → `degradado`; + Google 40 ms → `ok`
-- [ ] Casos de perda continuam iguais
-- [ ] Texto de "Detalhes técnicos" do painel deixa claro que o limite de 150 ms vale para os dois servidores
-- [ ] `make test` passa
+- [x] Cloudflare 200 ms + Google 40 ms → `ok`
+- [x] Os dois > 150 ms → `degradado`
+- [x] Cloudflare sem média + Google 200 ms → `degradado`; + Google 40 ms → `ok`
+- [x] Casos de perda continuam iguais
+- [x] Texto de "Detalhes técnicos" do painel deixa claro que o limite de 150 ms vale para os dois servidores
+- [x] `make test` passa

@@ -73,11 +73,21 @@ class ClassifyTest(unittest.TestCase):
     def test_degradado_perda_internet(self):
         self.assertEqual(self.c(cf=p(25), gg=p(50)), "degradado")
 
-    def test_degradado_latencia_alta(self):
-        self.assertEqual(self.c(cf=p(0, 151)), "degradado")
+    def test_degradado_latencia_alta_nos_dois(self):
+        self.assertEqual(self.c(cf=p(0, 151), gg=p(0, 200)), "degradado")
+
+    def test_um_alvo_lento_sozinho_e_ok(self):
+        self.assertEqual(self.c(cf=p(0, 200), gg=p(0, 40)), "ok")
+        self.assertEqual(self.c(cf=p(0, 40), gg=p(0, 200)), "ok")
+
+    def test_cf_sem_media_e_google_lento_e_degradado(self):
+        self.assertEqual(self.c(cf=p(100, None), gg=p(0, 200)), "degradado")
+
+    def test_cf_sem_media_e_google_rapido_e_ok(self):
+        self.assertEqual(self.c(cf=p(100, None), gg=p(0, 40)), "ok")
 
     def test_latencia_no_limite_e_ok(self):
-        self.assertEqual(self.c(cf=p(0, 150)), "ok")
+        self.assertEqual(self.c(cf=p(0, 150), gg=p(0, 150)), "ok")
 
     def test_prioridade_sem_wifi_sobre_tudo(self):
         self.assertEqual(self.c(iface=None, gw=p(100, None), dns=0), "sem_wifi")

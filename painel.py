@@ -353,7 +353,7 @@ function tecnico(){
     ['Tempo de resposta do DNS',a('dns'),' ms'],['Sinal Wi-Fi',a('dbm'),' dBm']];
   $('tec').innerHTML=`<p>A cada 5 segundos o monitor envia sinais (ping) para o roteador e para dois servidores na internet (Cloudflare e Google), testa o DNS e lê a força do sinal Wi-Fi.
     Se o roteador não responde, o problema está dentro de casa; se o roteador responde mas a internet não, o problema é da operadora.
-    “Instável” significa que algum pacote se perdeu ou que a internet demorou mais de 150 ms.</p>
+    “Instável” significa que algum pacote se perdeu ou que a internet demorou mais de 150 ms nos dois servidores (Cloudflare e Google); se só um deles estiver lento, a internet não é considerada instável.</p>
     <div class="tab"><table><tr><th>Medição (média no período)</th><th class="n">Valor</th></tr>${M.map(([l,v,u,d])=>`<tr><td>${l}</td><td class="n">${num(v,d||1)}${u}</td></tr>`).join('')}</table></div>
     <div class="tab"><table><tr><th>Situação</th><th>Código</th><th class="n">Medições</th><th class="n">% do tempo</th></tr>${[...D.resumo].sort((x,y)=>y.n-x.n).map(r=>
       `<tr><td>${esc(stNome(r.status))}</td><td><code>${esc(r.status)}</code></td><td class="n">${num(r.n)}</td><td class="n">${num(100*r.n/tot,2)}%</td></tr>`).join('')}</table></div>`}
