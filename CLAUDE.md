@@ -41,3 +41,37 @@ All via `make` (run `make help` for the list). Python is pinned to `/usr/bin/pyt
 **Schema** lives in `SCHEMA` in `monitor.py` using `CREATE TABLE IF NOT EXISTS` only — no migrations. Adding columns won't affect an existing `conexao.db`; requires manual `ALTER TABLE` or a fresh DB.
 
 **Dashboard**: written for non-technical users in plain Portuguese, with raw numbers tucked into a "Detalhes técnicos" `<details>`. `/api?min=N` returns the points plus precomputed summary fields (`atual`, `recentes`, `inicio_atual`, `ultima_queda`, `falhas`, `quedas`, `wifi`, `passo`). Points are downsampled into ≤ `MAX_PONTOS`=600 **fixed-time** buckets (mean values, worst status). Empty buckets are dropped, so gaps when the monitor was off survive, and the client treats a gap > `max(20s, 2.5×passo)` as "sem medição". An outage with NULL `end_epoch` (monitor crashed) ends at the first later sample with a different status. Frontend: hand-drawn canvas charts (no library), shared hover tooltip, status → plain-language text in the JS `ST` map, polls every 5s. Colors follow the dataviz reference palette (series `--s1`/`--s2`, status `--good`/`--warning`/`--critical`). Opens DB with `mode=ro` so it is safe to run alongside the monitor.
+
+## SOLID
+
+Apply SOLID at the **architecture** level: module boundaries, dependency direction, and the interfaces between them. It is a way to shape seams, not a naming ritual. "Module" means whatever this codebase groups behaviour into: here, a function or a script.
+
+### Scope: boy scout rule
+
+SOLID applies to:
+
+- code written new in the current change, and
+- the existing code the current flow already passes through, when a small local edit clears friction that change is hitting.
+
+The rest of the codebase stays as it is. Keep a change's blast radius on the flow being built or fixed: a repo-wide SOLID refactor is its own piece of work, and happens only when explicitly asked for. The codebase converges one change at a time.
+
+When applying a principle would require reshaping modules outside the current flow, leave them alone and say so in the summary of the change.
+
+### The principles, as architecture rules
+
+- **SRP**: a module has one reason to change. When one flow forces edits in a module that other flows also own for unrelated reasons, that module is holding two responsibilities.
+- **OCP**: new behaviour arrives as a new implementation behind an existing interface, rather than another branch in a growing conditional over kinds of thing.
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/` (created lazily). See `docs/agents/domain.md`.
+
+### Git guardrails
+
+Destructive git (`commit`, `push`, `reset`, …) is denied via `permissions.deny` in `.claude/settings.json`. See `docs/agents/git-guardrails.md`.
