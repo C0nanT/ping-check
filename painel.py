@@ -40,15 +40,33 @@ COLUNAS = (("gw_avg_ms", "gw"), ("cf_avg_ms", "cf"), ("gg_avg_ms", "gg"), ("gw_l
 assert tuple(a for _, a in COLUNAS) == CAMPOS
 
 
-def pontos_do_periodo(c, desde, agora):
-    """Pontos do gráfico e o passo (s). Até MAX_PONTOS amostras voltam como estão; acima disso o SQLite
-    agrupa em MAX_PONTOS baldes de tempo fixo (média; status = pior do balde). Baldes vazios somem,
+MAX_PERIODO = 30 * 86400    # s: período mais longo que a API aceita
+
+
+def periodo(agora, minutos=60, de=None, ate=None):
+    """(de, ate) em epoch: os últimos `minutos`, ou de `de` a `ate` quando os dois vêm. `ate` no futuro vira
+    agora; período maior que MAX_PERIODO é cortado no começo. ValueError se o início não for antes do fim."""
+    if de is None and ate is None:
+        de, ate = agora - max(1, minutos) * 60, agora
+    elif de is None or ate is None:
+        raise ValueError("informe o início (de) e o fim (ate) do período")
+    else:
+        ate = min(ate, agora)
+        if not de < ate:        # também pega nan
+            raise ValueError("o início do período precisa ser antes do fim (e antes de agora)")
+    return max(de, ate - MAX_PERIODO), ate
+
+
+def pontos_do_periodo(c, desde, ate):
+    """Pontos do gráfico e o passo (s) de [desde, ate). Até MAX_PONTOS amostras voltam como estão; acima disso
+    o SQLite agrupa em MAX_PONTOS baldes de tempo fixo (média; status = pior do balde). Baldes vazios somem,
     então períodos sem medição continuam aparecendo como buraco."""
-    n = c.execute("SELECT COUNT(*) FROM checks WHERE epoch >= ?", (desde,)).fetchone()[0]
+    n = c.execute("SELECT COUNT(*) FROM checks WHERE epoch >= ? AND epoch < ?", (desde, ate)).fetchone()[0]
     if n <= MAX_PONTOS:
         brutos = ", ".join(f"{col} {nome}" for col, nome in COLUNAS)
-        return rows(c, f"SELECT epoch, status, {brutos} FROM checks WHERE epoch >= ? ORDER BY epoch", (desde,)), INTERVALO
-    tam = (agora - desde) / MAX_PONTOS
+        return rows(c, f"SELECT epoch, status, {brutos} FROM checks WHERE epoch >= ? AND epoch < ? ORDER BY epoch",
+                    (desde, ate)), INTERVALO
+    tam = (ate - desde) / MAX_PONTOS
     medias = ", ".join(f"AVG({col}) {nome}" for col, nome in COLUNAS)
     # Regra do SQLite: numa consulta com um único MAX(), as colunas soltas (status) vêm da linha
     # que deu o máximo, ou seja, o status do pior grau do balde.
@@ -56,9 +74,9 @@ def pontos_do_periodo(c, desde, agora):
     return rows(c, f"""SELECT {campos} FROM (
                            SELECT AVG(epoch) epoch, status, {medias},
                                   MAX(CASE status WHEN 'ok' THEN 0 WHEN 'degradado' THEN 1 ELSE 2 END) grau
-                           FROM checks WHERE epoch >= ?
+                           FROM checks WHERE epoch >= ? AND epoch < ?
                            GROUP BY CAST((epoch - ?) / ? AS INTEGER)) ORDER BY epoch""",
-                (desde, desde, tam)), tam
+                (desde, ate, desde, tam)), tam
 
 
 def banco_tamanho(c, agora):
@@ -193,7 +211,7 @@ def nota_carga(ocioso, down, up):
     return {"nome": nome, "cat": cat, "acrescimo": acrescimo, "fase": fase}
 
 
-def velocidade(c, desde):
+def velocidade(c, desde, ate):
     """(testes do período em ordem, último teste bem-sucedido mesmo fora do período). Teste com erro vem sem Mbps."""
     if not tem_tabela(c, "velocidade"):
         return [], None
@@ -208,19 +226,21 @@ def velocidade(c, desde):
                 "carga": None if r["tem_carga"] is None else
                 {"ocioso": r["ocioso_ms"], "down": r["down_ms"], "up": r["up_ms"],
                  "nota": nota_carga(r["ocioso_ms"], r["down_ms"], r["up_ms"])}}
-    testes = [item(r) for r in rows(c, base + " WHERE v.epoch >= ? ORDER BY v.epoch", (desde,))]
+    testes = [item(r) for r in rows(c, base + " WHERE v.epoch >= ? AND v.epoch < ? ORDER BY v.epoch", (desde, ate))]
     ultimo = rows(c, base + " WHERE v.erro IS NULL AND v.down_mbps IS NOT NULL ORDER BY v.epoch DESC LIMIT 1")
     return testes, item(ultimo[0]) if ultimo else None
 
 
-def api(minutos):
+def api(minutos=60, de=None, ate=None):
+    """Dados do período [de, ate) (ou dos últimos `minutos`); atual/recentes/wifi/banco/dias são sempre de agora."""
     agora = time.time()
-    desde = agora - minutos * 60
+    desde, ate = periodo(agora, minutos, de, ate)
     marcas = ",".join("?" * len(CAIU))
     c = conectar()
     try:
-        pontos, passo = pontos_do_periodo(c, desde, agora)
-        resumo = rows(c, "SELECT status, COUNT(*) n FROM checks WHERE epoch >= ? GROUP BY status", (desde,))
+        pontos, passo = pontos_do_periodo(c, desde, ate)
+        resumo = rows(c, "SELECT status, COUNT(*) n FROM checks WHERE epoch >= ? AND epoch < ? GROUP BY status",
+                      (desde, ate))
 
         atual = rows(c, "SELECT epoch, status FROM checks ORDER BY epoch DESC LIMIT 1")
         atual = atual[0] if atual else None
@@ -231,14 +251,14 @@ def api(minutos):
         quedas = rows(c, """SELECT id, status, start_epoch ini,
                                    COALESCE(end_epoch, (SELECT MIN(k.epoch) FROM checks k
                                                         WHERE k.epoch > o.start_epoch AND k.status != o.status)) fim
-                            FROM outages o WHERE end_epoch IS NULL OR end_epoch >= ?
-                            ORDER BY start_epoch DESC""", (desde,))
+                            FROM outages o WHERE (end_epoch IS NULL OR end_epoch >= ?) AND start_epoch < ?
+                            ORDER BY start_epoch DESC""", (desde, ate))
         for q in quedas:
             if q["fim"] is None and parado:
                 q["fim"] = atual["epoch"] if atual else q["ini"]
         quedas = [q for q in quedas if q["fim"] is None or q["fim"] >= desde]
         falhas = {"n": len(quedas),
-                  "seg": sum((q["fim"] or agora) - max(q["ini"], desde) for q in quedas)}
+                  "seg": sum(min(q["fim"] or agora, ate) - max(q["ini"], desde) for q in quedas)}
         quedas = quedas[:30]
         rotas_das_quedas(c, quedas)
 
@@ -255,13 +275,13 @@ def api(minutos):
         wifi = rows(c, "SELECT ssid, freq FROM wifi_info ORDER BY id DESC LIMIT 1")
         banco = banco_tamanho(c, agora)
         dias = dias_recentes(c, agora)
-        testes, ultimo_teste = velocidade(c, desde)
+        testes, ultimo_teste = velocidade(c, desde, ate)
     finally:
         c.close()
     return {"pontos": pontos, "passo": passo, "resumo": resumo, "quedas": quedas, "falhas": falhas,
             "atual": atual, "recentes": recentes, "ultima_queda": ultima[0]["epoch"] if ultima else None,
             "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "banco": banco, "dias": dias,
-            "velocidade": testes, "velocidade_ultimo": ultimo_teste, "agora": agora}
+            "velocidade": testes, "velocidade_ultimo": ultimo_teste, "agora": agora, "de": desde, "ate": ate}
 
 
 class H(BaseHTTPRequestHandler):
@@ -270,9 +290,18 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/":
             body, tipo = PAGINA.encode(), "text/html; charset=utf-8"
         elif u.path == "/api":
+            q = parse_qs(u.query)
+            um = lambda k, tipo, padrao=None: tipo(q[k][0]) if k in q else padrao
             try:
-                m = int(parse_qs(u.query).get("min", ["60"])[0])
-                body, tipo = json.dumps(api(max(1, min(m, 60 * 24 * 30)))).encode(), "application/json"
+                args = {"minutos": um("min", int, 60), "de": um("de", float), "ate": um("ate", float)}
+            except ValueError:
+                self.send_error(400, "parametro invalido")
+                return
+            try:
+                body, tipo = json.dumps(api(**args)).encode(), "application/json"
+            except ValueError as e:
+                self.send_error(400, str(e))
+                return
             except Exception as e:
                 self.send_error(500, str(e))
                 return
@@ -307,6 +336,7 @@ PAGINA = r"""<!doctype html>
 --good-bg:rgba(12,163,12,.15);--warning-bg:rgba(250,178,25,.13);--critical-bg:rgba(208,59,59,.18);--nodata-bg:rgba(137,135,129,.12);
 --band:rgba(255,255,255,.08)}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1000px;margin:0 auto;padding:20px 16px 40px;transition:opacity .2s}
 main.carregando{opacity:.6}
@@ -368,14 +398,25 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
 .carga{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding-top:12px;border-top:1px solid var(--grid)}
 .carga svg{width:22px;height:22px;flex:none;margin-top:1px}
 .carga b{display:block}.carga .sub{font-size:13px;color:var(--muted)}.carga p{margin:2px 0;color:var(--ink2);font-size:14px}
+.datas{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;padding:14px 18px}
+.datas label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink2);font-weight:600}
+.datas input{font:inherit;font-size:14px;color:var(--ink);background:var(--page);border:1px solid var(--ring);border-radius:7px;padding:5px 8px}
+.datas button{font:inherit;font-size:14px;font-weight:600;border:0;border-radius:7px;padding:7px 16px;background:var(--ink);color:var(--surface);cursor:pointer}
+.datas .erro{flex-basis:100%;color:var(--critical);font-size:13px}.datas .erro:empty{display:none}
 .diasx{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:4px}
 </style></head><body><main id="m">
 <header>
   <div><h1>Minha internet</h1><div class="upd" id="upd">carregando…</div></div>
   <div class="seg" id="per" role="group" aria-label="Período">
-    <button data-min="60">Última hora</button><button data-min="360">6 horas</button><button data-min="1440">24 horas</button><button data-min="10080">7 dias</button>
+    <button data-min="60">Última hora</button><button data-min="360">6 horas</button><button data-min="1440">24 horas</button><button data-min="10080">7 dias</button><button id="bdatas" aria-expanded="false">Escolher datas</button>
   </div>
 </header>
+<form class="card datas" id="datas" hidden>
+  <label>De<input type="datetime-local" id="dde" required></label>
+  <label>Até<input type="datetime-local" id="date" required></label>
+  <button type="submit">Ver</button>
+  <span class="erro" id="derro" role="alert"></span>
+</form>
 <section class="card hero" id="hero"></section>
 <div class="tiles" id="tiles"></div>
 <section class="card"><h3>Como foi o período</h3>
@@ -452,18 +493,21 @@ const TESTE_MAX=90;   // mesmo TESTE_MAX do painel.py: teste sem fim gravado
 const janelasTeste=()=>(D.velocidade||[]).map(t=>[t.epoch,t.fim??Math.min(D.agora,t.epoch+TESTE_MAX)]);
 const emTeste=(e,J)=>J.some(([a,b])=>e>=a&&e<=b+10);
 
-let D=null,MIN=60;
+let D=null,MIN=60,FAIXA=null;   // FAIXA = {de,ate} (epoch) escolhida em "Escolher datas"; aí MIN não vale
 try{MIN=+localStorage.getItem('periodo')||60}catch(e){}
-const janela=()=>[D.agora-MIN*60,D.agora];
+const janela=()=>[D.de,D.ate];   // o servidor devolve o período já ajustado (fim no futuro vira agora)
+const dm=e=>new Date(e*1000).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+const mesmoDia=(a,b)=>new Date(a*1000).toDateString()===new Date(b*1000).toDateString();
 const limite=()=>Math.max(20,D.passo*2.5);   // distância maior que isso entre pontos = monitor desligado
 
 function prep(cv){const dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;
   if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr)}
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);g.font='12px system-ui,sans-serif';return{g,W,H}}
-function eixoX(g,x0,x1,L,pw,y){const longo=x1-x0>36*3600,n=pw<480?2:4;g.fillStyle=css('--muted');
-  for(let i=0;i<=n;i++){const e=x0+(x1-x0)*i/n,d=new Date(e*1000);
+// período longo ou que não termina hoje leva a data; acima de 8 dias, só a data
+function eixoX(g,x0,x1,L,pw,y){const data=x1-x0>36*3600||!mesmoDia(x1,D.agora),soData=x1-x0>8*86400,n=pw<480?2:4;g.fillStyle=css('--muted');
+  for(let i=0;i<=n;i++){const e=x0+(x1-x0)*i/n;
     g.textAlign=i===0?'left':i===n?'right':'center';
-    g.fillText((longo?d.toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','')+' ':'')+hm(e),L+pw*i/n,y)}}
+    g.fillText(soData?dm(e):(data?dm(e)+' ':'')+hm(e),L+pw*i/n,y)}}
 function perto(P,e,lim=limite()){let m=null,dm=Infinity;for(const p of P){const d=Math.abs(p.epoch-e);if(d<dm){dm=d;m=p}}return dm<=lim?m:null}
 function nice(v){const s=v/4,p=10**Math.floor(Math.log10(s)),m=s/p;return(m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10)*p*4}
 
@@ -642,7 +686,8 @@ function draw(){
   velocidade();
   lineChart($('c2'),[{k:'sinal',c:'--s1',n:'sinal'}],{un:'%',max:100});
   quedas();tecnico();
-  $('upd').textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR')+' · atualiza sozinho a cada 5 s'+textoBanco(D.banco)}
+  $('upd').textContent=(FAIXA?'Mostrando de '+dm(D.de)+' '+hm(D.de)+' até '+(mesmoDia(D.de,D.ate)?'':dm(D.ate)+' ')+hm(D.ate)+' · ':'')+
+    'Atualizado às '+new Date().toLocaleTimeString('pt-BR')+' · atualiza sozinho a cada 5 s'+textoBanco(D.banco)}
 
 function hover(cv){const card=cv.parentElement,tip=card.querySelector('.tip');
   cv.onpointermove=ev=>{if(!cv._h)return;const r=cv.getBoundingClientRect(),h=cv._h(ev.clientX-r.left);cv._base();
@@ -652,13 +697,31 @@ function hover(cv){const card=cv.parentElement,tip=card.querySelector('.tip');
     tip.style.left=Math.max(8,left)+'px';tip.style.top=(r.top-cr.top+(cv.id==='tl'?cv.clientHeight+4:8))+'px'};
   cv.onpointerleave=()=>{tip.style.display='none';cv._base&&cv._base()}}
 
-function marcaPeriodo(){document.querySelectorAll('#per button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.min===MIN))}
+function marcaPeriodo(){document.querySelectorAll('#per button[data-min]').forEach(b=>b.setAttribute('aria-pressed',!FAIXA&&+b.dataset.min===MIN));
+  $('bdatas').setAttribute('aria-pressed',!!FAIXA)}
 async function load(){
-  try{const r=await fetch('/api?min='+MIN);if(!r.ok)throw 0;D=await r.json();draw()}
+  try{const r=await fetch(FAIXA?`/api?de=${FAIXA.de}&ate=${FAIXA.ate}`:'/api?min='+MIN);if(!r.ok)throw 0;D=await r.json();draw()}
   catch(e){$('upd').textContent='Não foi possível carregar os dados. O painel ainda está rodando?'}
   finally{$('m').classList.remove('carregando')}}
-document.querySelectorAll('#per button').forEach(b=>b.onclick=()=>{MIN=+b.dataset.min;try{localStorage.setItem('periodo',MIN)}catch(e){}
-  marcaPeriodo();$('m').classList.add('carregando');load()});
+function trocaPeriodo(){marcaPeriodo();$('m').classList.add('carregando');load()}
+function abreDatas(abrir){$('datas').hidden=!abrir;$('bdatas').setAttribute('aria-expanded',abrir)}
+document.querySelectorAll('#per button[data-min]').forEach(b=>b.onclick=()=>{MIN=+b.dataset.min;FAIXA=null;try{localStorage.setItem('periodo',MIN)}catch(e){}
+  abreDatas(false);trocaPeriodo()});
+// "Escolher datas": abre já preenchido com o período que está na tela. A escolha não fica salva:
+// quem reabre o painel dias depois volta para um período "até agora", não para uma data velha.
+const local=e=>{const d=new Date(e*1000),p=n=>String(n).padStart(2,'0');   // toISOString() daria UTC
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`};
+$('bdatas').onclick=()=>{const abrir=$('datas').hidden;abreDatas(abrir);if(!abrir)return;
+  const agora=Date.now()/1000;$('dde').max=local(agora);$('derro').textContent='';
+  if(D){$('dde').value=local(D.de);$('date').value=local(D.ate)}
+  $('dde').focus()};
+const MAX_DIAS=30;   // mesmo MAX_PERIODO do painel.py
+$('datas').onsubmit=ev=>{ev.preventDefault();
+  const de=new Date($('dde').value).getTime()/1000,ate=new Date($('date').value).getTime()/1000,agora=Date.now()/1000;
+  const erro=isNaN(de)||isNaN(ate)?'Preencha as duas datas.':de>=agora?'O início precisa ser antes de agora.'
+    :de>=ate?'O início precisa ser antes do fim.':ate-de>MAX_DIAS*86400?`Escolha no máximo ${MAX_DIAS} dias.`:'';
+  $('derro').textContent=erro;if(erro)return;
+  FAIXA={de,ate};abreDatas(false);trocaPeriodo()};
 ['tl','c1','c2','c3'].forEach(id=>hover($(id)));
 $('q').addEventListener('toggle',ev=>{const id=+ev.target.dataset.id;if(!id)return;
   ev.target.open?CAMINHO_ABERTO.add(id):CAMINHO_ABERTO.delete(id)},true);

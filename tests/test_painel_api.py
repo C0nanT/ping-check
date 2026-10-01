@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import shutil
@@ -598,6 +599,108 @@ class JanelaTesteTest(VelocidadeBase):
         self.assertEqual(r["resumo"], [{"status": "degradado", "n": 1}])
         self.assertEqual([p["status"] for p in r["pontos"]], ["degradado"])
         self.assertEqual(r["atual"]["status"], "degradado")
+
+
+class PeriodoTest(unittest.TestCase):
+    def test_ultimos_minutos(self):
+        self.assertEqual(painel.periodo(AGORA, 60), (AGORA - 3600, AGORA))
+
+    def test_minutos_no_minimo_1(self):
+        self.assertEqual(painel.periodo(AGORA, 0), (AGORA - 60, AGORA))
+
+    def test_intervalo_de_datas(self):
+        self.assertEqual(painel.periodo(AGORA, de=AGORA - 900, ate=AGORA - 300), (AGORA - 900, AGORA - 300))
+
+    def test_fim_no_futuro_vira_agora(self):
+        self.assertEqual(painel.periodo(AGORA, de=AGORA - 900, ate=AGORA + 999), (AGORA - 900, AGORA))
+
+    def test_periodo_longo_e_cortado_no_comeco(self):
+        ate = AGORA - 100
+        self.assertEqual(painel.periodo(AGORA, de=ate - painel.MAX_PERIODO - 500, ate=ate), (ate - painel.MAX_PERIODO, ate))
+        self.assertEqual(painel.periodo(AGORA, 10 ** 9)[0], AGORA - painel.MAX_PERIODO)
+
+    def test_invalidos(self):
+        for de, ate in ((AGORA - 100, AGORA - 200), (AGORA - 100, AGORA - 100), (AGORA + 10, AGORA + 20),
+                        (AGORA - 100, None), (None, AGORA), (float("nan"), AGORA), (AGORA - 100, float("nan"))):
+            with self.subTest(de=de, ate=ate), self.assertRaises(ValueError):
+                painel.periodo(AGORA, de=de, ate=ate)
+
+
+class IntervaloApiTest(VelocidadeBase):
+    """Período [de, ate) no passado: só o que está dentro dele entra; o estado atual continua sendo de agora."""
+    DE, ATE = AGORA - 3000, AGORA - 2000
+
+    def test_pontos_resumo_e_velocidade_so_do_intervalo(self):
+        for e in (self.DE - 5, self.DE, self.ATE - 5, self.ATE, AGORA - 10):
+            self.amostra(e, gw=1.0)
+        self.velo(self.DE - 100, down=1.0, up=1.0)
+        dentro = self.velo(self.DE + 100, down=50.0, up=10.0)
+        self.velo(self.ATE + 100, down=2.0, up=2.0)
+        r = painel.api(de=self.DE, ate=self.ATE)
+        self.assertEqual([p["epoch"] for p in r["pontos"]], [self.DE, self.ATE - 5])
+        self.assertEqual(r["resumo"], [{"status": "ok", "n": 2}])
+        self.assertEqual([t["epoch"] for t in r["velocidade"]], [self.DE + 100])
+        self.assertEqual(r["velocidade_ultimo"]["down"], 2.0)        # o último continua sendo o mais recente
+        self.assertEqual(r["atual"]["epoch"], AGORA - 10)            # estado atual não segue o período
+        self.assertEqual((r["de"], r["ate"]), (self.DE, self.ATE))
+        self.assertTrue(dentro)
+
+    def test_resposta_traz_periodo_tambem_em_minutos(self):
+        r = painel.api(10)
+        self.assertEqual((r["de"], r["ate"]), (AGORA - 600, AGORA))
+
+    def test_queda_depois_do_fim_fica_fora(self):
+        self.queda(self.ATE + 100, self.ATE + 200)
+        self.sql("INSERT INTO outages (status, start_ts, start_epoch) VALUES (?, ?, ?)",
+                 ("falha_lan", iso(self.ATE + 300), self.ATE + 300))   # aberta, sem fim
+        r = painel.api(de=self.DE, ate=self.ATE)
+        self.assertEqual(r["quedas"], [])
+        self.assertEqual(r["falhas"], {"n": 0, "seg": 0})
+
+    def test_queda_que_atravessa_o_fim_e_recortada(self):
+        self.queda(self.ATE - 100, self.ATE + 500)
+        r = painel.api(de=self.DE, ate=self.ATE)
+        self.assertEqual(r["falhas"], {"n": 1, "seg": 100})
+        self.assertEqual(r["quedas"][0]["fim"], self.ATE + 500)    # a lista mostra a duração real
+
+    def test_queda_que_cobre_o_intervalo_todo(self):
+        self.queda(self.DE - 100, self.ATE + 100)
+        self.assertEqual(painel.api(de=self.DE, ate=self.ATE)["falhas"]["seg"], 1000)
+
+    def test_baldes_pelo_tamanho_do_intervalo(self):
+        for i in range(painel.MAX_PONTOS + 1):
+            self.amostra(self.DE + i, gw=1.0)
+        r = painel.api(de=self.DE, ate=self.ATE)
+        self.assertEqual(r["passo"], 1000 / painel.MAX_PONTOS)
+
+
+class HandlerTest(ApiBase):
+    """Parâmetros da /api pela URL: inválido dá 400, não 500."""
+
+    def get(self, caminho):
+        h = painel.H.__new__(painel.H)
+        h.path, h.wfile = caminho, io.BytesIO()
+        enviado = {}
+        h.send_error = lambda cod, msg=None: enviado.update(cod=cod, msg=msg)
+        h.send_response = lambda cod: enviado.update(cod=cod)
+        h.send_header = h.end_headers = lambda *a: None
+        h.do_GET()
+        return enviado["cod"], h.wfile.getvalue()
+
+    def test_min_continua_funcionando(self):
+        cod, corpo = self.get("/api?min=1")
+        self.assertEqual(cod, 200)
+        self.assertEqual(json.loads(corpo)["de"], AGORA - 60)
+
+    def test_de_e_ate(self):
+        cod, corpo = self.get(f"/api?de={AGORA - 900}&ate={AGORA - 300}")
+        self.assertEqual(cod, 200)
+        self.assertEqual(json.loads(corpo)["ate"], AGORA - 300)
+
+    def test_invalidos_dao_400(self):
+        for q in ("min=abc", "de=x&ate=1", f"de={AGORA}", f"de={AGORA - 10}&ate={AGORA - 20}"):
+            with self.subTest(q=q):
+                self.assertEqual(self.get("/api?" + q)[0], 400)
 
 
 if __name__ == "__main__":
