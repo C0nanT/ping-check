@@ -1,0 +1,30 @@
+services:
+  monitor:
+    build: .
+    image: ping-check
+    container_name: ping-check
+    restart: unless-stopped
+    # rede do host: precisa ver a rota padrão, o gateway e /proc/net/wireless reais
+    network_mode: host
+    # roda como root só para o systemd-inhibit; o monitor cai para 1000:1000 (ver Dockerfile)
+    # tini como PID 1: repassa o SIGTERM ao monitor
+    init: true
+    # AppArmor do Docker bloqueia o D-Bus do host, usado pelo nmcli
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      # projeto montado em /app: conexao.db fica no host (make summary/web continuam funcionando)
+      - .:/app
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /etc/localtime:/etc/localtime:ro
+    # saudável = última amostra em checks tem menos de 30 s (ciclo é de 5 s)
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import sqlite3,sys,time; e=sqlite3.connect('file:/app/conexao.db?mode=ro',uri=True,timeout=5).execute('select max(epoch) from checks').fetchone()[0]; sys.exit(0 if e and time.time()-e<30 else 1)"
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3

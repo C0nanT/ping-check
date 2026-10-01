@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+
+# Banco SQLite (+ WAL) e backups
+conexao.db
+conexao.db-wal
+conexao.db-shm
+conexao-*.db
