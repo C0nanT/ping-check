@@ -78,6 +78,15 @@ class AgrupamentoTest(ApiBase):
         self.assertEqual(p2["status"], "ok")
         self.assertAlmostEqual(p0["epoch"], desde + 2.5)
 
+    def test_varios_status_de_queda_no_balde_devolve_grau_2(self):
+        desde = AGORA - 3600
+        for i in range(1200):
+            status = {0: "degradado", 1: "falha_dns", 2: "ok"}.get(i, "ok")
+            self.amostra(desde + 3 * i + 1, status=status)
+        r = painel.api(60)
+        self.assertEqual(r["pontos"][0]["status"], "falha_dns")
+        self.assertEqual(set(r["pontos"][0]), {"epoch", "status", *painel.CAMPOS})
+
     def test_media_ignora_valores_nulos(self):
         desde = AGORA - 3600
         for i in range(1200):

@@ -8,8 +8,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Testes de agrupamento de `01-testes-unitarios/02` passam sem alteração
-- [ ] Novo teste: vários status de queda no mesmo balde → status de grau 2
-- [ ] Até `MAX_PONTOS` amostras, as linhas brutas voltam como hoje
-- [ ] Contrato do `/api` (`pontos`, `passo`, demais campos) inalterado; JS sem mudanças
-- [ ] Comentário curto explica a regra de coluna solta com `MAX()` do SQLite
+- [x] Testes de agrupamento de `01-testes-unitarios/02` passam sem alteração
+- [x] Novo teste: vários status de queda no mesmo balde → status de grau 2
+- [x] Até `MAX_PONTOS` amostras, as linhas brutas voltam como hoje
+- [x] Contrato do `/api` (`pontos`, `passo`, demais campos) inalterado; JS sem mudanças
+- [x] Comentário curto explica a regra de coluna solta com `MAX()` do SQLite

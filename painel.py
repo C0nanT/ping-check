@@ -15,7 +15,6 @@ INTERVALO = 5           # mesmo INTERVAL do monitor.py
 PARADO_APOS = 60        # s sem amostra nova = monitor parado
 CAIU = ("sem_wifi", "falha_lan", "falha_internet", "falha_dns")
 CAMPOS = ("gw", "cf", "gg", "gwl", "cfl", "ggl", "dns", "dbm")
-GRAU = {"ok": 0, "degradado": 1}  # qualquer outro status (queda) = 2
 
 
 def conectar():
@@ -28,24 +27,30 @@ def rows(c, sql, args=()):
     return [dict(r) for r in c.execute(sql, args)]
 
 
-def reduz(pontos, desde, agora):
-    """Agrupa em até MAX_PONTOS baldes de tempo fixo (média; status = pior do balde).
-    Baldes vazios somem, então períodos sem medição continuam aparecendo como buraco."""
-    if len(pontos) <= MAX_PONTOS:
-        return pontos, INTERVALO
+COLUNAS = (("gw_avg_ms", "gw"), ("cf_avg_ms", "cf"), ("gg_avg_ms", "gg"), ("gw_loss_pct", "gwl"),
+           ("cf_loss_pct", "cfl"), ("gg_loss_pct", "ggl"), ("dns_ms", "dns"), ("wifi_dbm", "dbm"))
+assert tuple(a for _, a in COLUNAS) == CAMPOS
+
+
+def pontos_do_periodo(c, desde, agora):
+    """Pontos do gráfico e o passo (s). Até MAX_PONTOS amostras voltam como estão; acima disso o SQLite
+    agrupa em MAX_PONTOS baldes de tempo fixo (média; status = pior do balde). Baldes vazios somem,
+    então períodos sem medição continuam aparecendo como buraco."""
+    n = c.execute("SELECT COUNT(*) FROM checks WHERE epoch >= ?", (desde,)).fetchone()[0]
+    if n <= MAX_PONTOS:
+        brutos = ", ".join(f"{col} {nome}" for col, nome in COLUNAS)
+        return rows(c, f"SELECT epoch, status, {brutos} FROM checks WHERE epoch >= ? ORDER BY epoch", (desde,)), INTERVALO
     tam = (agora - desde) / MAX_PONTOS
-    baldes = {}
-    for p in pontos:
-        baldes.setdefault(int((p["epoch"] - desde) // tam), []).append(p)
-    out = []
-    for _, b in sorted(baldes.items()):
-        r = {"epoch": sum(x["epoch"] for x in b) / len(b)}
-        for k in CAMPOS:
-            v = [x[k] for x in b if x[k] is not None]
-            r[k] = sum(v) / len(v) if v else None
-        r["status"] = max(b, key=lambda x: GRAU.get(x["status"], 2))["status"]
-        out.append(r)
-    return out, tam
+    medias = ", ".join(f"AVG({col}) {nome}" for col, nome in COLUNAS)
+    # Regra do SQLite: numa consulta com um único MAX(), as colunas soltas (status) vêm da linha
+    # que deu o máximo, ou seja, o status do pior grau do balde.
+    campos = ", ".join(("epoch", "status") + CAMPOS)
+    return rows(c, f"""SELECT {campos} FROM (
+                           SELECT AVG(epoch) epoch, status, {medias},
+                                  MAX(CASE status WHEN 'ok' THEN 0 WHEN 'degradado' THEN 1 ELSE 2 END) grau
+                           FROM checks WHERE epoch >= ?
+                           GROUP BY CAST((epoch - ?) / ? AS INTEGER)) ORDER BY epoch""",
+                (desde, desde, tam)), tam
 
 
 def api(minutos):
@@ -54,11 +59,7 @@ def api(minutos):
     marcas = ",".join("?" * len(CAIU))
     c = conectar()
     try:
-        pontos = rows(c, """SELECT epoch, status, gw_avg_ms gw, cf_avg_ms cf, gg_avg_ms gg,
-                                   gw_loss_pct gwl, cf_loss_pct cfl, gg_loss_pct ggl,
-                                   dns_ms dns, wifi_dbm dbm
-                            FROM checks WHERE epoch >= ? ORDER BY epoch""", (desde,))
-        pontos, passo = reduz(pontos, desde, agora)
+        pontos, passo = pontos_do_periodo(c, desde, agora)
         resumo = rows(c, "SELECT status, COUNT(*) n FROM checks WHERE epoch >= ? GROUP BY status", (desde,))
 
         atual = rows(c, "SELECT epoch, status FROM checks ORDER BY epoch DESC LIMIT 1")
