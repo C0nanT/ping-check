@@ -16,9 +16,7 @@ All via `make` (run `make help` for the list). Python is pinned to `/usr/bin/pyt
 - `make test` — runs the `unittest` suite in `tests/` (no network, Docker or real DB).
 - `make hooks` — once per clone: sets `core.hooksPath=.githooks`, so the versioned `pre-push` hook runs `make test` and blocks the push on failure (`--no-verify` skips).
 - `make run` — monitor in foreground. `make web` — dashboard in foreground, for development (fails with "porta em uso" while the `painel` container holds the port: `make stop` or `PORT=8081 make web`).
-- `make start` / `stop` / `restart` / `status` / `logs` — both services in Docker (`docker compose`, containers `ping-check` (monitor) and `ping-check-painel`, both `restart: unless-stopped`).
 - `make summary` / `outages` / `last` / `rotas` / `velocidade` — ad-hoc SQL reports via the `$(SQL)` one-liner in the Makefile (no `sqlite3` CLI needed). Add new reports the same way.
-- `make backup` — online copy to `conexao-YYYYMMDD-HHMMSS.db`.
 - `make clean` — stops both services and **deletes the database** (incl. `-wal`/`-shm`).
 
 ## Docker
