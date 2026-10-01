@@ -32,10 +32,10 @@ O agrupamento em baldes de tempo fixo passa a ser feito **dentro do SQLite**, qu
 
 ## Testing Decisions
 
-- Os testes de agrupamento da spec `testes-unitarios` (feitos via `api()`) precisam continuar passando sem alteração: essa é a prova de que o comportamento não mudou.
+- Os testes de agrupamento da spec `01-testes-unitarios` (feitos via `api()`) precisam continuar passando sem alteração: essa é a prova de que o comportamento não mudou.
 - Acrescentar um caso com vários status de queda no mesmo balde para garantir que o status devolvido é de grau 2.
 - Medida de desempenho (manual, não entra em `make test`): gerar um banco sintético de 30 dias com amostras a cada 5 s e medir `api(43200)` e `api(10080)`. Meta: menos de 0,5 s em cada.
-- Prior art: testes de `api()` da spec `testes-unitarios`.
+- Prior art: testes de `api()` da spec `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -45,5 +45,5 @@ O agrupamento em baldes de tempo fixo passa a ser feito **dentro do SQLite**, qu
 
 ## Further Notes
 
-- Depende de `testes-unitarios`.
-- `uptime-por-dia` também consulta 30 dias a cada atualização; ela tem estratégia própria (cache dos dias fechados).
+- Depende de `01-testes-unitarios`.
+- `07-uptime-por-dia` também consulta 30 dias a cada atualização; ela tem estratégia própria (cache dos dias fechados).

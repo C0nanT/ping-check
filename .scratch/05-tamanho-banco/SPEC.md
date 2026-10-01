@@ -20,7 +20,7 @@ O topo do painel mostra sempre o tamanho atual do banco no disco e quanto ele cr
 6. Como dono, quero que o contador apareça mesmo quando o monitor estiver parado, para conferir o banco a qualquer hora.
 7. Como dono, quero que o contador não pese no painel, para continuar rápido.
 8. Como usuário não técnico, quero que o contador seja discreto e não roube atenção do estado da internet.
-9. Como dono, quero que funcione igual com o painel no host (`make web`) ou no container (`painel-no-docker`).
+9. Como dono, quero que funcione igual com o painel no host (`make web`) ou no container (`06-painel-no-docker`).
 
 ## Implementation Decisions
 
@@ -32,7 +32,7 @@ O topo do painel mostra sempre o tamanho atual do banco no disco e quanto ele cr
 ## Testing Decisions
 
 - Teste via `api()` com banco temporário: `banco.bytes` igual à soma dos arquivos existentes; sem `-wal` não quebra; `por_dia` é `null` com menos de 1 hora de dados e positivo com amostras de dias atrás.
-- Prior art: testes de `api()` da spec `testes-unitarios`.
+- Prior art: testes de `api()` da spec `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -42,4 +42,4 @@ O topo do painel mostra sempre o tamanho atual do banco no disco e quanto ele cr
 
 ## Further Notes
 
-- Depende de `testes-unitarios`.
+- Depende de `01-testes-unitarios`.

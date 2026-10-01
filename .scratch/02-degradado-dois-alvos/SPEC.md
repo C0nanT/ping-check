@@ -29,8 +29,8 @@ A latência para `degradado` passa a ser a **melhor média entre Cloudflare e Go
 
 ## Testing Decisions
 
-- Testes de `classify()` (base da spec `testes-unitarios`): Cloudflare 200 ms + Google 40 ms → `ok`; os dois > 150 → `degradado`; Cloudflare sem média + Google 200 ms → `degradado`; Cloudflare sem média + Google 40 ms → `ok`; perda > 0 em qualquer alvo continua igual ao comportamento atual.
-- Prior art: testes de `classify()` da spec `testes-unitarios`.
+- Testes de `classify()` (base da spec `01-testes-unitarios`): Cloudflare 200 ms + Google 40 ms → `ok`; os dois > 150 → `degradado`; Cloudflare sem média + Google 200 ms → `degradado`; Cloudflare sem média + Google 40 ms → `ok`; perda > 0 em qualquer alvo continua igual ao comportamento atual.
+- Prior art: testes de `classify()` da spec `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -39,5 +39,5 @@ A latência para `degradado` passa a ser a **melhor média entre Cloudflare e Go
 
 ## Further Notes
 
-- Depende de `testes-unitarios`.
+- Depende de `01-testes-unitarios`.
 - Nota de SOLID (OCP): esta mudança mexe no `if` encadeado de `classify()` sem criar um status novo; não acrescenta ramo.

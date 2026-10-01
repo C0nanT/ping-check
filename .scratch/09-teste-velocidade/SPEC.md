@@ -33,7 +33,7 @@ A cada 30 minutos o monitor faz um teste de velocidade em segundo plano usando o
 - Medida: Mbps = bytes × 8 ÷ segundos, contando do primeiro byte recebido (download) / do início do envio (upload) até o fim, para excluir DNS/TLS. Timeout por fase de ~30 s.
 - Agendamento: função pura que, dada a hora atual, a hora do último teste e o status atual, decide se é hora de testar. Testa se passou o intervalo **e** o status atual não é de queda. Primeiro teste ~1 minuto depois de o monitor iniciar.
 - Configuração: variável `VELOCIDADE_A_CADA` em minutos, padrão 30; `0` desliga.
-- Execução: mesmo padrão da spec `traceroute-na-queda` — o teste roda num executor sem bloquear o ciclo, e a thread principal grava o resultado quando o futuro termina. Nunca dois testes ao mesmo tempo.
+- Execução: mesmo padrão da spec `08-traceroute-na-queda` — o teste roda num executor sem bloquear o ciclo, e a thread principal grava o resultado quando o futuro termina. Nunca dois testes ao mesmo tempo.
 - Esquema: nova tabela `velocidade` (`CREATE TABLE IF NOT EXISTS`): `id`, `ts`, `epoch` (início), `fim_epoch`, `down_mbps`, `up_mbps`, `bytes_down`, `bytes_up`, `erro`.
 - Amostras de `checks` durante um teste são gravadas normalmente (os dados continuam honestos). No painel: o cartão principal (que olha as amostras recentes) ignora amostras `degradado` que caem dentro de uma janela de teste; o gráfico de rapidez desenha a janela como faixa discreta com legenda "teste de velocidade". O uptime não é afetado (só status de queda contam como fora do ar).
 - `/api` ganha `velocidade`: lista de testes do período (`epoch`, `fim`, `down`, `up`, `erro`) e o último teste bem-sucedido, mesmo que fora do período.
@@ -45,7 +45,7 @@ A cada 30 minutos o monitor faz um teste de velocidade em segundo plano usando o
 - Cálculo de Mbps: bytes/tempo conhecidos → valor esperado.
 - `api()` com banco temporário: testes no período aparecem; o último teste bem-sucedido vem mesmo fora do período; testes com erro aparecem com `erro` e sem Mbps.
 - Não testar a rede real.
-- Prior art: testes de `api()` e parsers da spec `testes-unitarios`.
+- Prior art: testes de `api()` e parsers da spec `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -55,6 +55,6 @@ A cada 30 minutos o monitor faz um teste de velocidade em segundo plano usando o
 
 ## Further Notes
 
-- Depende de `testes-unitarios`. A spec `bufferbloat` estende esta.
+- Depende de `01-testes-unitarios`. A spec `10-bufferbloat` estende esta.
 - `speed.cloudflare.com/__down` e `__up` são endpoints públicos sem contrato formal; se mudarem, o teste passa a registrar `erro`.
 - Decisão tomada pelo agente, para confirmar na revisão: o cartão principal ignora `degradado` dentro da janela de teste, em vez de pausar as medições durante o teste (pausar criaria buracos de "sem medição" e esconderia quedas reais).

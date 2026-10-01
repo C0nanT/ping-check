@@ -34,7 +34,7 @@ O teste de DNS passa a rodar como um **subprocesso com timeout** (`getent ahosts
 - Teste do comportamento de timeout: trocar o comando da constante por um que dorme mais que `DNS_TIMEOUT` (ex.: `sleep`) e verificar que `dns_check()` devolve `(0, None)` em menos de `DNS_TIMEOUT` + 1 s.
 - Teste de sucesso sem rede: trocar o comando por um que imprime uma linha no formato do `getent` e sai com 0 → `(1, ms)` com `ms` ≥ 0.
 - Teste de falha: comando que sai com código 2 → `(0, None)`.
-- Prior art: estrutura de `testes-unitarios`.
+- Prior art: estrutura de `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -43,4 +43,4 @@ O teste de DNS passa a rodar como um **subprocesso com timeout** (`getent ahosts
 
 ## Further Notes
 
-- Depende de `testes-unitarios`.
+- Depende de `01-testes-unitarios`.

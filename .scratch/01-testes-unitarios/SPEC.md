@@ -45,7 +45,7 @@ Nenhum teste roda `ping`, `ip`, `nmcli` ou acessa a rede.
 ## Testing Decisions
 
 - Bom teste = testa comportamento externo: entrada de `classify()`/parser → valor devolvido; linhas no banco → JSON de `api()`. Não testa funções internas como `reduz()` diretamente, nem nomes de variáveis ou SQL.
-- Agrupamento de pontos é testado **via `api()`**, não via `reduz()`, porque a spec `painel-sql-agregado` substitui `reduz()` por SQL e os testes precisam continuar valendo.
+- Agrupamento de pontos é testado **via `api()`**, não via `reduz()`, porque a spec `04-painel-sql-agregado` substitui `reduz()` por SQL e os testes precisam continuar valendo.
 - Módulos testados: `classify()`, parser do `ping`, `api()`.
 - Não há prior art no repo; esta spec cria o padrão.
 
@@ -57,4 +57,4 @@ Nenhum teste roda `ping`, `ip`, `nmcli` ou acessa a rede.
 
 ## Further Notes
 
-- Fazer esta spec **primeiro**: as outras (`degradado-dois-alvos`, `dns-sem-travar`, `painel-sql-agregado`, `tamanho-banco`, `uptime-por-dia`, `traceroute-na-queda`, `teste-velocidade`, `bufferbloat`) acrescentam testes em cima desta base.
+- Fazer esta spec **primeiro**: as outras (`02-degradado-dois-alvos`, `03-dns-sem-travar`, `04-painel-sql-agregado`, `05-tamanho-banco`, `07-uptime-por-dia`, `08-traceroute-na-queda`, `09-teste-velocidade`, `10-bufferbloat`) acrescentam testes em cima desta base.

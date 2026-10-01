@@ -30,7 +30,7 @@ Quando começa uma queda `falha_internet`, o monitor roda em segundo plano um `t
 - Ferramenta: `tracepath -n -m 15 1.1.1.1` (iputils; usa UDP, não precisa de root nem de capability). Dockerfile ganha o pacote `iputils-tracepath`. Timeout do subprocesso de ~30 s.
 - Execução: quando o laço abre uma queda `falha_internet`, submete o diagnóstico a um executor e **não espera**. A cada ciclo seguinte, o laço verifica se o futuro terminou e, se sim, grava o resultado. Toda escrita no banco continua na thread principal (a conexão SQLite é de uma thread só). Se o monitor parar antes de o diagnóstico terminar, ele é descartado.
 - Esquema: nova tabela `rotas` (`CREATE TABLE IF NOT EXISTS`, então um banco existente a ganha sozinho): `id`, `outage_id`, `ts`, `epoch`, `alvo`, `saltos` (JSON: lista de `{n, ip|null, ms|null}`), `ultimo_ok` (número do último salto que respondeu ou NULL), `saida` (texto bruto), `erro` (texto ou NULL).
-- Parser puro da saída do `tracepath` → lista de saltos + último salto que respondeu (padrão de parser da spec `testes-unitarios`).
+- Parser puro da saída do `tracepath` → lista de saltos + último salto que respondeu (padrão de parser da spec `01-testes-unitarios`).
 - Interpretação (no painel, função pura em Python que devolve a frase): nenhum salto respondeu ou só o gateway → "parou no seu roteador/modem"; respondeu algum salto depois do gateway → "passou do roteador e parou na rede da operadora (Nº ponto)"; erro → sem frase.
 - `/api`: cada item de `quedas` passa a incluir `rota` (`{"frase", "saltos"}` ou `null`), buscada pelo `outage_id`. A consulta de quedas passa a trazer o `id` da queda.
 - Frontend: frase como linha extra no item da lista; `<details>` "ver caminho" com tabela simples (ponto, IP, tempo).
@@ -41,7 +41,7 @@ Quando começa uma queda `falha_internet`, o monitor roda em segundo plano um `t
 - Interpretação: os casos de saltos acima → frase esperada.
 - `api()` com banco temporário: queda com linha em `rotas` → `rota` preenchida; sem linha → `null`.
 - Não testar a execução real do `tracepath` nem o laço.
-- Prior art: parser do `ping` e testes de `api()` da spec `testes-unitarios`.
+- Prior art: parser do `ping` e testes de `api()` da spec `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -51,5 +51,5 @@ Quando começa uma queda `falha_internet`, o monitor roda em segundo plano um `t
 
 ## Further Notes
 
-- Depende de `testes-unitarios`.
+- Depende de `01-testes-unitarios`.
 - O texto das frases deve seguir o tom do mapa `ST` (português simples, sem jargão).

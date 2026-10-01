@@ -36,7 +36,7 @@ Um cartão novo, "Últimos 30 dias", com uma faixa de 30 quadrados, um por dia (
 
 - Teste via `api()` com banco temporário: amostras em 3 dias diferentes → `dias` tem 30 itens, os dias certos com `n`/`fora` certos e o resto com `n: 0`; `quedas` conta outages pelo dia de início; status `degradado` não conta em `fora`.
 - Teste do cache: segunda chamada a `api()` devolve os mesmos dias fechados; amostras novas de hoje mudam só o item de hoje.
-- Prior art: testes de `api()` da spec `testes-unitarios`.
+- Prior art: testes de `api()` da spec `01-testes-unitarios`.
 
 ## Out of Scope
 
@@ -46,4 +46,4 @@ Um cartão novo, "Últimos 30 dias", com uma faixa de 30 quadrados, um por dia (
 
 ## Further Notes
 
-- Depende de `testes-unitarios`. Combina com `painel-sql-agregado`, mas não depende dela.
+- Depende de `01-testes-unitarios`. Combina com `04-painel-sql-agregado`, mas não depende dela.

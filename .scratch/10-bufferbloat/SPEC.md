@@ -8,7 +8,7 @@ Muitas conexões têm boa velocidade, mas ficam muito mais lentas para responder
 
 ## Solution
 
-Durante cada teste de velocidade (spec `teste-velocidade`), o monitor mede a latência até 1.1.1.1 em três momentos: parado (antes do teste), enquanto baixa e enquanto envia. O painel mostra quanto a internet "fica mais lenta quando está em uso", com uma nota simples (Ótimo / Bom / Razoável / Ruim) e uma frase do tipo "Quando alguém baixa algo, a resposta fica 120 ms mais lenta: chamadas de vídeo podem travar".
+Durante cada teste de velocidade (spec `09-teste-velocidade`), o monitor mede a latência até 1.1.1.1 em três momentos: parado (antes do teste), enquanto baixa e enquanto envia. O painel mostra quanto a internet "fica mais lenta quando está em uso", com uma nota simples (Ótimo / Bom / Razoável / Ruim) e uma frase do tipo "Quando alguém baixa algo, a resposta fica 120 ms mais lenta: chamadas de vídeo podem travar".
 
 ## User Stories
 
@@ -36,7 +36,7 @@ Durante cada teste de velocidade (spec `teste-velocidade`), o monitor mede a lat
 - Parser de ping sem `-q`: saída com várias respostas → mediana certa; com respostas faltando → perda certa; sem nenhuma resposta → mediana `None`, perda 100%.
 - Classificação da nota: os limites (29, 30, 59, 60, 199, 200 ms) → nota esperada.
 - `api()` com banco temporário: teste com linha em `latencia_carga` → `carga` preenchida; sem linha → `null`.
-- Prior art: testes de parser e de `api()` das specs `testes-unitarios` e `teste-velocidade`.
+- Prior art: testes de parser e de `api()` das specs `01-testes-unitarios` e `09-teste-velocidade`.
 
 ## Out of Scope
 
@@ -46,5 +46,5 @@ Durante cada teste de velocidade (spec `teste-velocidade`), o monitor mede a lat
 
 ## Further Notes
 
-- Depende de `teste-velocidade` (e, por ela, de `testes-unitarios`).
+- Depende de `09-teste-velocidade` (e, por ela, de `01-testes-unitarios`).
 - Os limites da nota seguem os usados por testes públicos de bufferbloat; ajustáveis depois.
