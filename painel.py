@@ -80,7 +80,11 @@ def api(minutos):
         falhas = {"n": len(quedas),
                   "seg": sum((q["fim"] or agora) - max(q["ini"], desde) for q in quedas)}
 
-        ultima = rows(c, f"SELECT epoch FROM checks WHERE status IN ({marcas}) ORDER BY epoch DESC LIMIT 1", CAIU)
+        # toda queda abre uma linha em outages; só varre checks a partir da mais recente (sem ela, sem queda)
+        ini = c.execute("SELECT MAX(start_epoch) FROM outages").fetchone()[0]
+        ultima = [] if ini is None else rows(
+            c, f"SELECT epoch FROM checks WHERE epoch >= ? AND status IN ({marcas}) ORDER BY epoch DESC LIMIT 1",
+            (ini,) + CAIU)
         inicio_atual = None
         if atual and atual["status"] in CAIU:
             ant = rows(c, "SELECT epoch FROM checks WHERE status != ? ORDER BY epoch DESC LIMIT 1", (atual["status"],))

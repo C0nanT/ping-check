@@ -10,5 +10,5 @@
 
 - [ ] `api(10080)` e `api(43200)` abaixo de 0,5 s no banco sintético, tempos registrados na entrega
 - [x] Banco sintético com e sem quedas medido
-- [ ] Consultas ajustadas mantêm `make test` passando
+- [x] Consultas ajustadas mantêm `make test` passando
 - [x] Gerador e medição não entram em `make test` nem tocam no `conexao.db` real
