@@ -6,13 +6,13 @@
 
 **Blocked by:** nada (independente do 01)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Função `arrasto(cv)` separada do `hover(cv)`; o `timeline()` expõe a escala x → epoch
-- [ ] Pointer events + `setPointerCapture`; funciona com mouse e toque; a rolagem vertical continua no celular
-- [ ] Faixa com `--band`/`--axis` durante o arrasto; tooltip "De 14:05 até 15:20" (com data quando passa de um dia)
-- [ ] < 6 px ou < 60 s = clique (não faz nada); Esc cancela
-- [ ] `de` arredondado ao minuto para baixo e `ate` para cima, limitados à janela atual
-- [ ] Zoom repetido funciona; os presets voltam ao normal; o topo mostra "Mostrando de … até …"
-- [ ] Cursor `crosshair`; legenda do cartão ganha "Clique e arraste para ver um trecho de perto."
-- [ ] `node --check` no script; `make test` passa
+- [x] Função `arrasto(cv)` separada do `hover(cv)`; o `timeline()` expõe a escala x → epoch
+- [x] Pointer events + `setPointerCapture`; funciona com mouse e toque; a rolagem vertical continua no celular
+- [x] Faixa com `--band`/`--axis` durante o arrasto; tooltip "De 14:05 até 15:20" (com data quando passa de um dia)
+- [x] < 6 px ou < 60 s = clique (não faz nada); Esc cancela
+- [x] `de` arredondado ao minuto para baixo e `ate` para cima, limitados à janela atual
+- [x] Zoom repetido funciona; os presets voltam ao normal; o topo mostra "Mostrando de … até …"
+- [x] Cursor `crosshair`; legenda do cartão ganha "Clique e arraste para ver um trecho de perto."
+- [x] `node --check` no script; `make test` passa

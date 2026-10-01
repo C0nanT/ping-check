@@ -6,11 +6,11 @@
 
 **Blocked by:** nada
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] De/Até = data + hora `HH:MM`; `9:05` vira `09:05`; hora inválida mostra erro no `#derro`
-- [ ] Epoch montado com `new Date(a, m-1, d, h, min)` (hora local)
-- [ ] Ao abrir, os campos vêm com o período da tela (`D.de`/`D.ate`)
-- [ ] As validações atuais continuam (início < fim, início < agora, ≤ 30 dias)
-- [ ] Todo texto de hora do painel continua em 24 h
-- [ ] `node --check` no script; `make test` passa
+- [x] De/Até = data + hora `HH:MM`; `9:05` vira `09:05`; hora inválida mostra erro no `#derro`
+- [x] Epoch montado com `new Date(a, m-1, d, h, min)` (hora local)
+- [x] Ao abrir, os campos vêm com o período da tela (`D.de`/`D.ate`)
+- [x] As validações atuais continuam (início < fim, início < agora, ≤ 30 dias)
+- [x] Todo texto de hora do painel continua em 24 h
+- [x] `node --check` no script; `make test` passa

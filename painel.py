@@ -366,7 +366,7 @@ h3{font-size:16px;margin:0 0 2px}
 .leg i{display:inline-block;width:12px;height:12px;border-radius:3px}
 .leg i.ln{width:16px;height:2px;border-radius:1px}
 canvas{display:block;width:100%;touch-action:pan-y}
-#tl{height:62px}.chart{height:220px}
+#tl{height:62px;cursor:crosshair}.chart{height:220px}
 .tip{position:absolute;display:none;z-index:2;pointer-events:none;background:var(--surface);border:1px solid var(--ring);border-radius:8px;
 box-shadow:0 4px 14px rgba(0,0,0,.14);padding:8px 10px;font-size:13px;white-space:nowrap}
 .tip .t{color:var(--muted);margin-bottom:3px}
@@ -401,6 +401,7 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
 .datas{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;padding:14px 18px}
 .datas label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink2);font-weight:600}
 .datas input{font:inherit;font-size:14px;color:var(--ink);background:var(--page);border:1px solid var(--ring);border-radius:7px;padding:5px 8px}
+.datas .dh{display:flex;gap:6px}.datas input[inputmode]{width:5.5em}
 .datas button{font:inherit;font-size:14px;font-weight:600;border:0;border-radius:7px;padding:7px 16px;background:var(--ink);color:var(--surface);cursor:pointer}
 .datas .erro{flex-basis:100%;color:var(--critical);font-size:13px}.datas .erro:empty{display:none}
 .diasx{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:4px}
@@ -412,15 +413,15 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
   </div>
 </header>
 <form class="card datas" id="datas" hidden>
-  <label>De<input type="datetime-local" id="dde" required></label>
-  <label>Até<input type="datetime-local" id="date" required></label>
+  <label>De<span class="dh"><input type="date" id="dde"><input type="text" id="hde" inputmode="numeric" maxlength="5" placeholder="hh:mm" aria-label="Hora de início"></span></label>
+  <label>Até<span class="dh"><input type="date" id="date"><input type="text" id="hate" inputmode="numeric" maxlength="5" placeholder="hh:mm" aria-label="Hora de fim"></span></label>
   <button type="submit">Ver</button>
   <span class="erro" id="derro" role="alert"></span>
 </form>
 <section class="card hero" id="hero"></section>
 <div class="tiles" id="tiles"></div>
 <section class="card"><h3>Como foi o período</h3>
-  <p class="cap">Cada cor mostra como a internet estava naquele momento. Passe o mouse para ver o horário.</p>
+  <p class="cap">Cada cor mostra como a internet estava naquele momento. Passe o mouse para ver o horário. Clique e arraste para ver um trecho de perto.</p>
   <canvas id="tl"></canvas>
   <div class="leg"><span><i style="background:var(--good)"></i>Funcionando</span><span><i style="background:var(--warning)"></i>Instável ou lenta</span><span><i style="background:var(--critical)"></i>Sem conexão</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
   <div class="tip"></div></section>
@@ -493,7 +494,7 @@ const TESTE_MAX=90;   // mesmo TESTE_MAX do painel.py: teste sem fim gravado
 const janelasTeste=()=>(D.velocidade||[]).map(t=>[t.epoch,t.fim??Math.min(D.agora,t.epoch+TESTE_MAX)]);
 const emTeste=(e,J)=>J.some(([a,b])=>e>=a&&e<=b+10);
 
-let D=null,MIN=60,FAIXA=null;   // FAIXA = {de,ate} (epoch) escolhida em "Escolher datas"; aí MIN não vale
+let D=null,MIN=60,FAIXA=null;   // FAIXA = {de,ate} (epoch) escolhida em "Escolher datas" ou arrastando; aí MIN não vale
 try{MIN=+localStorage.getItem('periodo')||60}catch(e){}
 const janela=()=>[D.de,D.ate];   // o servidor devolve o período já ajustado (fim no futuro vira agora)
 const dm=e=>new Date(e*1000).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
@@ -548,7 +549,8 @@ function timeline(){
   g.restore();
   eixoX(g,x0,x1,0,W,H-4);
   cv._base=timeline;
-  cv._h=x=>{const e=x0+x/W*(x1-x0),p=perto(P,e);
+  cv._x2e=x=>Math.max(x0,Math.min(x1,x0+x/W*(x1-x0)));cv._faixaY=[T,T+ph];   // escala e altura para o arrasto()
+  cv._h=x=>{const e=cv._x2e(x),p=perto(P,e);
     const st=p?`<div class="r"><i class="q" style="background:var(--${cat(p.status)})"></i><b>${esc(stNome(p.status))}</b></div>`
               :`<div class="r"><i class="q" style="background:var(--nodata)"></i><b>Sem medição</b></div>`;
     return{x,html:`<div class="t">${esc(quando(p?p.epoch:e))}</div>${st}`}};
@@ -686,16 +688,46 @@ function draw(){
   velocidade();
   lineChart($('c2'),[{k:'sinal',c:'--s1',n:'sinal'}],{un:'%',max:100});
   quedas();tecnico();
+  document.querySelectorAll('canvas').forEach(c=>c._sobre&&c._sobre());   // arrasto em andamento sobrevive à atualização
   $('upd').textContent=(FAIXA?'Mostrando de '+dm(D.de)+' '+hm(D.de)+' até '+(mesmoDia(D.de,D.ate)?'':dm(D.ate)+' ')+hm(D.ate)+' · ':'')+
     'Atualizado às '+new Date().toLocaleTimeString('pt-BR')+' · atualiza sozinho a cada 5 s'+textoBanco(D.banco)}
 
 function hover(cv){const card=cv.parentElement,tip=card.querySelector('.tip');
-  cv.onpointermove=ev=>{if(!cv._h)return;const r=cv.getBoundingClientRect(),h=cv._h(ev.clientX-r.left);cv._base();
+  cv.onpointermove=ev=>{if(!cv._h||cv._arrastando)return;const r=cv.getBoundingClientRect(),h=cv._h(ev.clientX-r.left);cv._base();
     if(!h){tip.style.display='none';return}cv._mark(h);tip.innerHTML=h.html;tip.style.display='block';
     const cr=card.getBoundingClientRect(),ox=r.left-cr.left,tw=tip.offsetWidth;let left=ox+h.x+14;
     if(left+tw>card.clientWidth-8)left=ox+h.x-14-tw;
     tip.style.left=Math.max(8,left)+'px';tip.style.top=(r.top-cr.top+(cv.id==='tl'?cv.clientHeight+4:8))+'px'};
-  cv.onpointerleave=()=>{tip.style.display='none';cv._base&&cv._base()}}
+  cv.onpointerleave=()=>{if(cv._arrastando)return;tip.style.display='none';cv._base&&cv._base()}}
+
+// Clicar, segurar e arrastar seleciona um trecho; ao soltar chama escolhe(de, ate) com o trecho arredondado ao
+// minuto. Só usa a escala que o gráfico expõe (cv._x2e: x em px → epoch, já limitado à janela; cv._faixaY:
+// [topo, base] da faixa, opcional). Arrasto curto (< 6 px ou < 60 s) é clique e não faz nada; Esc cancela.
+// Com o touch-action:pan-y do canvas, no toque o arrasto vertical continua rolando a página (pointercancel).
+const ARRASTO_MIN_PX=6,ARRASTO_MIN_S=60;
+function arrasto(cv,escolhe){const card=cv.parentElement,tip=card.querySelector('.tip');let a=null;   // a = {id, x0, x}
+  const trecho=()=>{const [e0,e1]=[cv._x2e(a.x0),cv._x2e(a.x)].sort((p,q)=>p-q),[j0,j1]=[cv._x2e(0),cv._x2e(cv.clientWidth)];
+    return{de:Math.max(j0,Math.floor(e0/60)*60),ate:Math.min(j1,Math.ceil(e1/60)*60),curto:Math.abs(a.x-a.x0)<ARRASTO_MIN_PX||e1-e0<ARRASTO_MIN_S}};
+  const pinta=()=>{cv._base();const g=cv.getContext('2d'),[y0,y1]=cv._faixaY||[0,cv.clientHeight];
+    const xa=Math.min(a.x0,a.x),xb=Math.max(a.x0,a.x);
+    g.fillStyle=css('--band');g.fillRect(xa,y0,xb-xa,y1-y0);
+    g.strokeStyle=css('--axis');g.lineWidth=1;g.strokeRect(Math.round(xa)+.5,y0+.5,Math.max(0,Math.round(xb-xa)-1),y1-y0-1);
+    const {de,ate}=trecho(),dia=!mesmoDia(de,ate),f=e=>(dia?dm(e)+' ':'')+hm(e);
+    tip.innerHTML=`<div class="r"><b>De ${esc(f(de))} até ${esc(f(ate))}</b></div>`;tip.style.display='block';
+    const r=cv.getBoundingClientRect(),cr=card.getBoundingClientRect(),tw=tip.offsetWidth;
+    tip.style.left=Math.max(8,Math.min(r.left-cr.left+(xa+xb)/2-tw/2,card.clientWidth-tw-8))+'px';
+    tip.style.top=(r.top-cr.top+cv.clientHeight+4)+'px'};
+  const fim=ev=>{if(!a||(ev&&ev.pointerId!==a.id))return null;const t=trecho();
+    try{cv.releasePointerCapture(a.id)}catch(e){}a=null;cv._arrastando=false;cv._sobre=null;tip.style.display='none';cv._base&&cv._base();return t};
+  const px=ev=>{const r=cv.getBoundingClientRect();return Math.max(0,Math.min(r.width,ev.clientX-r.left))};
+  cv.addEventListener('pointerdown',ev=>{if(!cv._x2e||ev.button!==0||a)return;
+    a={id:ev.pointerId,x0:px(ev),x:px(ev)};cv.setPointerCapture(ev.pointerId);if(ev.pointerType==='mouse')ev.preventDefault()});
+  cv.addEventListener('pointermove',ev=>{if(!a||ev.pointerId!==a.id)return;a.x=px(ev);
+    if(!cv._arrastando&&Math.abs(a.x-a.x0)<ARRASTO_MIN_PX)return;   // ainda pode ser um clique: o hover segue
+    cv._arrastando=true;cv._sobre=pinta;pinta()});
+  cv.addEventListener('pointerup',ev=>{const t=fim(ev);if(t&&!t.curto)escolhe(t.de,t.ate)});
+  cv.addEventListener('pointercancel',fim);
+  addEventListener('keydown',ev=>{if(ev.key==='Escape'&&a)fim()})}
 
 function marcaPeriodo(){document.querySelectorAll('#per button[data-min]').forEach(b=>b.setAttribute('aria-pressed',!FAIXA&&+b.dataset.min===MIN));
   $('bdatas').setAttribute('aria-pressed',!!FAIXA)}
@@ -705,24 +737,39 @@ async function load(){
   finally{$('m').classList.remove('carregando')}}
 function trocaPeriodo(){marcaPeriodo();$('m').classList.add('carregando');load()}
 function abreDatas(abrir){$('datas').hidden=!abrir;$('bdatas').setAttribute('aria-expanded',abrir)}
+// período escolhido em "Escolher datas" ou arrastando no "Como foi o período"; os botões de período o limpam
+function escolheFaixa(de,ate){FAIXA={de,ate};abreDatas(false);trocaPeriodo()}
 document.querySelectorAll('#per button[data-min]').forEach(b=>b.onclick=()=>{MIN=+b.dataset.min;FAIXA=null;try{localStorage.setItem('periodo',MIN)}catch(e){}
   abreDatas(false);trocaPeriodo()});
 // "Escolher datas": abre já preenchido com o período que está na tela. A escolha não fica salva:
 // quem reabre o painel dias depois volta para um período "até agora", não para uma data velha.
-const local=e=>{const d=new Date(e*1000),p=n=>String(n).padStart(2,'0');   // toISOString() daria UTC
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`};
+// A hora é um campo de texto HH:MM, não datetime-local: esse o navegador desenha no idioma dele,
+// e em inglês aparece 2:30 PM. Datas e horas são montadas em hora local (toISOString() daria UTC).
+const p2=n=>String(n).padStart(2,'0');
+const dataLocal=e=>{const d=new Date(e*1000);return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`};
+const horaLocal=e=>{const d=new Date(e*1000);return `${p2(d.getHours())}:${p2(d.getMinutes())}`};
+const HORA=/^([01]?\d|2[0-3]):([0-5]\d)$/;
+// "9:05" → "09:05"; null se não for uma hora válida
+function hora24(t){const h=HORA.exec(t.trim());return h&&`${p2(+h[1])}:${h[2]}`}
+// "AAAA-MM-DD" + "HH:MM" → epoch (hora local)
+function epochLocal(data,hora){const [a,m,d]=data.split('-').map(Number),[h,min]=hora.split(':').map(Number);
+  return new Date(a,m-1,d,h,min).getTime()/1000}
 $('bdatas').onclick=()=>{const abrir=$('datas').hidden;abreDatas(abrir);if(!abrir)return;
-  const agora=Date.now()/1000;$('dde').max=local(agora);$('derro').textContent='';
-  if(D){$('dde').value=local(D.de);$('date').value=local(D.ate)}
+  const agora=Date.now()/1000;$('dde').max=dataLocal(agora);$('derro').textContent='';
+  if(D){$('dde').value=dataLocal(D.de);$('hde').value=horaLocal(D.de);$('date').value=dataLocal(D.ate);$('hate').value=horaLocal(D.ate)}
   $('dde').focus()};
 const MAX_DIAS=30;   // mesmo MAX_PERIODO do painel.py
 $('datas').onsubmit=ev=>{ev.preventDefault();
-  const de=new Date($('dde').value).getTime()/1000,ate=new Date($('date').value).getTime()/1000,agora=Date.now()/1000;
-  const erro=isNaN(de)||isNaN(ate)?'Preencha as duas datas.':de>=agora?'O início precisa ser antes de agora.'
+  const hde=hora24($('hde').value),hate=hora24($('hate').value);
+  if(hde)$('hde').value=hde;if(hate)$('hate').value=hate;
+  const vazia=!$('dde').value||!$('date').value,de=epochLocal($('dde').value,hde||''),ate=epochLocal($('date').value,hate||''),agora=Date.now()/1000;
+  const erro=vazia?'Preencha as duas datas.':!hde||!hate?'Hora inválida: use o formato 14:30.'
+    :isNaN(de)||isNaN(ate)?'Preencha as duas datas.':de>=agora?'O início precisa ser antes de agora.'
     :de>=ate?'O início precisa ser antes do fim.':ate-de>MAX_DIAS*86400?`Escolha no máximo ${MAX_DIAS} dias.`:'';
   $('derro').textContent=erro;if(erro)return;
-  FAIXA={de,ate};abreDatas(false);trocaPeriodo()};
+  escolheFaixa(de,ate)};
 ['tl','c1','c2','c3'].forEach(id=>hover($(id)));
+arrasto($('tl'),escolheFaixa);
 $('q').addEventListener('toggle',ev=>{const id=+ev.target.dataset.id;if(!id)return;
   ev.target.open?CAMINHO_ABERTO.add(id):CAMINHO_ABERTO.delete(id)},true);
 addEventListener('resize',draw);matchMedia('(prefers-color-scheme:dark)').onchange=draw;
