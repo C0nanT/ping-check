@@ -9,10 +9,10 @@
 **Status:** ready-for-agent
 
 - [ ] `make start` → `make status` mostra `monitor` e `painel` como `healthy`
-- [ ] Painel acessível em 127.0.0.1 e inacessível de outra máquina da rede
+- [x] Painel acessível em 127.0.0.1 e inacessível de outra máquina da rede
 - [ ] Editar o painel + `make restart` aplica a mudança sem rebuild
-- [ ] Painel roda como 1000:1000, sem D-Bus e sem `apparmor=unconfined`
-- [ ] `make logs` mostra os dois serviços
-- [ ] `make web` com o container rodando sai com mensagem em português (porta ocupada → `make stop` ou outra `PORT`)
-- [ ] Falha de um serviço não impede o outro de subir
-- [ ] `CLAUDE.md` (Commands e Docker) atualizado; regra de não usar `user:` explicitada como regra do serviço `monitor`
+- [x] Painel roda como 1000:1000, sem D-Bus e sem `apparmor=unconfined`
+- [x] `make logs` mostra os dois serviços
+- [x] `make web` com o container rodando sai com mensagem em português (porta ocupada → `make stop` ou outra `PORT`)
+- [x] Falha de um serviço não impede o outro de subir
+- [x] `CLAUDE.md` (Commands e Docker) atualizado; regra de não usar `user:` explicitada como regra do serviço `monitor`

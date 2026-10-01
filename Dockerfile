@@ -1,9 +1,9 @@
 FROM python:3.12-slim
 
-# ping, ip (iproute2), nmcli (info do Wi-Fi via D-Bus do host)
+# ping, tracepath (diagnóstico nas quedas; UDP, sem root), ip (iproute2), nmcli (info do Wi-Fi via D-Bus do host)
 # e systemd-inhibit (pacote systemd), que segura a suspensão via logind do host
 RUN apt-get update \
- && apt-get install -y --no-install-recommends iputils-ping iproute2 network-manager libcap2-bin systemd \
+ && apt-get install -y --no-install-recommends iputils-ping iputils-tracepath iproute2 network-manager libcap2-bin systemd \
  && setcap cap_net_raw+ep /usr/bin/ping \
  && rm -rf /var/lib/apt/lists/*
 

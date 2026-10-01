@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-testes-unitarios/02 (Testes de `api()` com banco temporário)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] `dias` sempre com 30 itens em ordem; dias sem amostra com `n: 0`
-- [ ] `fora` conta só status de `CAIU` (`degradado` conta como funcionando); `quedas` conta outages pelo dia de início
-- [ ] Cartão não muda com o período selecionado
-- [ ] Tooltip em texto (não só cor), no estilo `.tip` existente
-- [ ] Grade CSS sem rolagem horizontal no celular; cores dos tokens existentes nos dois temas
-- [ ] Testes via `api()`; `make test` passa
+- [x] `dias` sempre com 30 itens em ordem; dias sem amostra com `n: 0`
+- [x] `fora` conta só status de `CAIU` (`degradado` conta como funcionando); `quedas` conta outages pelo dia de início
+- [x] Cartão não muda com o período selecionado
+- [x] Tooltip em texto (não só cor), no estilo `.tip` existente
+- [x] Grade CSS sem rolagem horizontal no celular; cores dos tokens existentes nos dois temas
+- [x] Testes via `api()`; `make test` passa

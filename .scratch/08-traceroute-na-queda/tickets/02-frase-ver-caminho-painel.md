@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-testes-unitarios/02 (Testes de `api()` com banco temporário), 01 (Monitor grava `tracepath` na queda)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Função pura de interpretação testada: só gateway/nenhum salto → roteador; salto após o gateway → operadora com número do ponto; erro → sem frase
-- [ ] `quedas` traz o `id` da queda e `rota` (`{frase, saltos}` ou `null`)
-- [ ] Queda sem diagnóstico continua aparecendo como hoje
-- [ ] Frases no tom do mapa `ST`, sem jargão
-- [ ] `<details>` "ver caminho" funciona no celular (tabela com rolagem própria, como `.tab`)
-- [ ] Testes via `api()`; `make test` passa
+- [x] Função pura de interpretação testada: só gateway/nenhum salto → roteador; salto após o gateway → operadora com número do ponto; erro → sem frase
+- [x] `quedas` traz o `id` da queda e `rota` (`{frase, saltos}` ou `null`)
+- [x] Queda sem diagnóstico continua aparecendo como hoje
+- [x] Frases no tom do mapa `ST`, sem jargão
+- [x] `<details>` "ver caminho" funciona no celular (tabela com rolagem própria, como `.tab`)
+- [x] Testes via `api()`; `make test` passa

@@ -1,14 +1,27 @@
+import json
 import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 import unittest
+from datetime import datetime, timedelta
 from unittest import mock
 
 import monitor
 import painel
 
 AGORA = 1_000_000.0
+HOJE = datetime.fromtimestamp(AGORA).date()
+
+
+def iso(epoch):
+    return datetime.fromtimestamp(epoch).isoformat(timespec="seconds")
+
+
+def meia_noite(d):
+    """epoch da meia-noite local do dia d."""
+    return datetime(d.year, d.month, d.day).timestamp()
 
 
 class ApiBase(unittest.TestCase):
@@ -21,6 +34,8 @@ class ApiBase(unittest.TestCase):
         con = sqlite3.connect(self.db)
         con.executescript(monitor.SCHEMA)
         con.close()
+        painel.limpar_cache_dias()
+        self.addCleanup(painel.limpar_cache_dias)
         for alvo in (mock.patch.object(painel, "DB", self.db),
                      mock.patch.object(painel.time, "time", return_value=AGORA)):
             alvo.start()
@@ -33,12 +48,19 @@ class ApiBase(unittest.TestCase):
         con.close()
 
     def amostra(self, epoch, status="ok", gw=None, dbm=None):
-        self.sql("INSERT INTO checks (ts, epoch, status, gw_avg_ms, wifi_dbm) VALUES ('t', ?, ?, ?, ?)",
-                 (epoch, status, gw, dbm))
+        self.sql("INSERT INTO checks (ts, epoch, status, gw_avg_ms, wifi_dbm) VALUES (?, ?, ?, ?, ?)",
+                 (iso(epoch), epoch, status, gw, dbm))
 
     def queda(self, ini, fim, status="falha_lan"):
-        self.sql("INSERT INTO outages (status, start_ts, start_epoch, end_ts, end_epoch) VALUES (?, 't', ?, 't', ?)",
-                 (status, ini, fim))
+        return self.sql_id("INSERT INTO outages (status, start_ts, start_epoch, end_ts, end_epoch) VALUES (?, ?, ?, ?, ?)",
+                           (status, iso(ini), ini, iso(fim), fim))
+
+    def sql_id(self, q, args=()):
+        con = sqlite3.connect(self.db)
+        with con:
+            i = con.execute(q, args).lastrowid
+        con.close()
+        return i
 
 
 class AgrupamentoTest(ApiBase):
@@ -216,10 +238,6 @@ class IsolamentoTest(ApiBase):
         self.assertNotEqual(os.path.abspath(painel.DB), os.path.abspath(monitor.DB_PATH))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BancoTest(ApiBase):
     def test_bytes_soma_principal_wal_e_shm(self):
         for sufixo, n in (("-wal", 1000), ("-shm", 500)):
@@ -249,3 +267,338 @@ class BancoTest(ApiBase):
             f.write(b"x" * 100000)
         b = painel.api(60)["banco"]
         self.assertAlmostEqual(b["por_dia"], os.path.getsize(self.db) / 2)
+
+
+class DiasTest(ApiBase):
+    def dia(self, r, d):
+        return next(x for x in r["dias"] if x["dia"] == d.isoformat())
+
+    def test_sempre_30_dias_em_ordem_terminando_hoje(self):
+        dias = painel.api(60)["dias"]
+        self.assertEqual(len(dias), 30)
+        self.assertEqual([x["dia"] for x in dias],
+                         [(HOJE - timedelta(days=i)).isoformat() for i in range(29, -1, -1)])
+        self.assertEqual({(x["n"], x["fora"], x["quedas"]) for x in dias}, {(0, 0, 0)})
+
+    def test_conta_amostras_e_fora_por_dia_local(self):
+        ontem, antes = HOJE - timedelta(days=1), HOJE - timedelta(days=10)
+        for s in ("ok", "degradado", "falha_internet"):
+            self.amostra(meia_noite(HOJE) + 60, status=s)
+        self.amostra(meia_noite(ontem) + 1, status="falha_lan")
+        self.amostra(meia_noite(ontem) + 86399, status="sem_wifi")
+        self.amostra(meia_noite(antes) + 3600, status="degradado")
+        r = painel.api(60)
+        self.assertEqual(self.dia(r, HOJE), {"dia": HOJE.isoformat(), "n": 3, "fora": 1, "quedas": 0})
+        self.assertEqual((self.dia(r, ontem)["n"], self.dia(r, ontem)["fora"]), (2, 2))
+        self.assertEqual((self.dia(r, antes)["n"], self.dia(r, antes)["fora"]), (1, 0))
+        self.assertEqual(sum(x["n"] for x in r["dias"]), 6)
+
+    def test_dia_vem_do_ts_e_nao_do_epoch(self):
+        # ts gravado num fuso diferente do painel: vale o prefixo do ts
+        ontem = HOJE - timedelta(days=1)
+        self.sql("INSERT INTO checks (ts, epoch, status) VALUES (?, ?, 'ok')",
+                 (ontem.isoformat() + "T23:59:00", meia_noite(HOJE) + 1800))
+        r = painel.api(60)
+        self.assertEqual(self.dia(r, ontem)["n"], 1)
+        self.assertEqual(self.dia(r, HOJE)["n"], 0)
+
+    def test_amostras_com_mais_de_30_dias_ficam_fora(self):
+        self.amostra(meia_noite(HOJE - timedelta(days=30)) + 10)
+        self.assertEqual(sum(x["n"] for x in painel.api(60)["dias"]), 0)
+
+    def test_quedas_contam_pelo_dia_de_inicio(self):
+        ontem = HOJE - timedelta(days=1)
+        self.queda(meia_noite(HOJE) - 60, meia_noite(HOJE) + 600)   # começa ontem, termina hoje
+        self.queda(meia_noite(HOJE) + 900, meia_noite(HOJE) + 960)
+        self.queda(meia_noite(HOJE) + 1900, meia_noite(HOJE) + 1960, status="falha_dns")
+        r = painel.api(60)
+        self.assertEqual(self.dia(r, ontem)["quedas"], 1)
+        self.assertEqual(self.dia(r, HOJE)["quedas"], 2)
+
+    def test_nao_depende_do_periodo(self):
+        self.amostra(meia_noite(HOJE - timedelta(days=5)) + 10)
+        self.assertEqual(painel.api(60)["dias"], painel.api(10080)["dias"])
+
+
+class CacheDiasTest(ApiBase):
+    def espiar(self):
+        espia = mock.patch.object(painel, "dias_contados", wraps=painel.dias_contados).start()
+        self.addCleanup(mock.patch.stopall)
+        return espia
+
+    def test_segunda_chamada_so_consulta_hoje(self):
+        self.amostra(meia_noite(HOJE - timedelta(days=3)) + 10)
+        primeira = painel.api(60)["dias"]
+        espia = self.espiar()
+        self.assertEqual(painel.api(60)["dias"], primeira)
+        self.assertEqual([c.args[1:] for c in espia.call_args_list], [(HOJE, HOJE)])
+
+    def test_dia_fechado_nao_e_reconsultado(self):
+        d = HOJE - timedelta(days=3)
+        self.amostra(meia_noite(d) + 10)
+        painel.api(60)
+        self.amostra(meia_noite(d) + 20)       # amostra atrasada num dia fechado: fica desatualizado (aceito)
+        r = painel.api(60)["dias"]
+        self.assertEqual(next(x for x in r if x["dia"] == d.isoformat())["n"], 1)
+
+    def test_amostras_novas_de_hoje_mudam_so_hoje(self):
+        self.amostra(meia_noite(HOJE - timedelta(days=1)) + 10)
+        antes = painel.api(60)["dias"]
+        self.amostra(meia_noite(HOJE) + 10, status="falha_lan")
+        depois = painel.api(60)["dias"]
+        self.assertEqual(antes[:-1], depois[:-1])
+        self.assertEqual((depois[-1]["n"], depois[-1]["fora"]), (1, 1))
+
+    def test_virada_do_dia_anda_a_janela_e_guarda_o_dia_que_fechou(self):
+        self.amostra(meia_noite(HOJE) + 10)
+        antes = painel.api(60)["dias"]
+        amanha = AGORA + 86400
+        espia = self.espiar()
+        with mock.patch.object(painel.time, "time", return_value=amanha):
+            depois = painel.api(60)["dias"]
+            self.assertEqual(depois[:-2], antes[1:-1])
+            self.assertEqual(depois[-2], {"dia": HOJE.isoformat(), "n": 1, "fora": 0, "quedas": 0})
+            self.assertEqual(depois[-1]["dia"], (HOJE + timedelta(days=1)).isoformat())
+            self.assertEqual([c.args[1:] for c in espia.call_args_list],
+                             [(HOJE, HOJE), (HOJE + timedelta(days=1),) * 2])
+            espia.reset_mock()
+            painel.api(60)
+            self.assertEqual(len(espia.call_args_list), 1)
+        self.assertNotIn((HOJE - timedelta(days=29)).isoformat(), painel._dias_fechados)
+
+    def test_chamadas_simultaneas(self):
+        for i in range(5):
+            self.amostra(meia_noite(HOJE - timedelta(days=i + 1)) + 10)
+        res, erros = [], []
+
+        def chama():
+            try:
+                res.append(painel.api(60)["dias"])
+            except Exception as e:      # pragma: no cover
+                erros.append(e)
+        ts = [threading.Thread(target=chama) for _ in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(erros, [])
+        self.assertEqual(len(res), 8)
+        self.assertTrue(all(r == res[0] for r in res))
+        self.assertEqual(sum(x["n"] for x in res[0]), 5)
+
+
+def salto(n, ip=None, ms=None):
+    return {"n": n, "ip": ip, "ms": ms}
+
+
+class FraseRotaTest(unittest.TestCase):
+    def f(self, saltos, ultimo, erro=None):
+        return painel.frase_rota(saltos, ultimo, erro, "1.1.1.1")
+
+    def test_nenhum_salto_respondeu(self):
+        self.assertIn("parou no seu roteador", self.f([salto(1), salto(2)], None))
+
+    def test_sem_saltos(self):
+        self.assertIn("parou no seu roteador", self.f([], None))
+
+    def test_so_o_gateway(self):
+        self.assertIn("parou no seu roteador", self.f([salto(1, "192.168.0.1", 2.0), salto(2)], 1))
+
+    def test_salto_depois_do_gateway_e_operadora_com_numero_do_ponto(self):
+        saltos = [salto(1, "192.168.0.1", 2.0), salto(2), salto(3, "189.4.103.41", 14.0), salto(4)]
+        frase = self.f(saltos, 3)
+        self.assertIn("rede da operadora", frase)
+        self.assertIn("3º ponto", frase)
+
+    def test_chegou_ao_destino(self):
+        frase = self.f([salto(1, "192.168.0.1", 2.0), salto(2, "1.1.1.1", 9.0)], 2)
+        self.assertNotIn("operadora", frase)
+        self.assertIn("chegou", frase)
+
+    def test_erro_sem_frase(self):
+        self.assertIsNone(self.f([], None, "tempo esgotado"))
+
+
+class RotaApiTest(ApiBase):
+    def rota(self, oid, saltos, ultimo, erro=None):
+        self.sql("INSERT INTO rotas (outage_id, ts, epoch, alvo, saltos, ultimo_ok, saida, erro) "
+                 "VALUES (?, 't', ?, '1.1.1.1', ?, ?, 'x', ?)", (oid, AGORA - 100, json.dumps(saltos), ultimo, erro))
+
+    def test_queda_com_rota(self):
+        self.amostra(AGORA - 1)
+        oid = self.queda(AGORA - 200, AGORA - 100, status="falha_internet")
+        saltos = [salto(1, "192.168.0.1", 2.0), salto(2, "10.0.0.1", 9.0), salto(3)]
+        self.rota(oid, saltos, 2)
+        q = painel.api(60)["quedas"][0]
+        self.assertEqual(q["id"], oid)
+        self.assertEqual(q["rota"]["saltos"], saltos)
+        self.assertIn("2º ponto", q["rota"]["frase"])
+
+    def test_queda_sem_rota_vem_null(self):
+        self.amostra(AGORA - 1)
+        oid = self.queda(AGORA - 200, AGORA - 100)
+        q = painel.api(60)["quedas"][0]
+        self.assertEqual(q["id"], oid)
+        self.assertIsNone(q["rota"])
+
+    def test_rota_com_erro_sem_frase(self):
+        self.amostra(AGORA - 1)
+        oid = self.queda(AGORA - 200, AGORA - 100, status="falha_internet")
+        self.rota(oid, [], None, erro="tempo esgotado")
+        self.assertIsNone(painel.api(60)["quedas"][0]["rota"]["frase"])
+
+
+class BancoAntigoTest(ApiBase):
+    """Banco criado antes das tabelas novas: o painel (somente leitura) não pode criá-las e não pode quebrar."""
+
+    def setUp(self):
+        super().setUp()
+        con = sqlite3.connect(self.db)
+        novas = [n for (n,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                 if n not in ("checks", "wifi_info", "outages", "runs")]
+        for n in novas:
+            con.execute(f"DROP TABLE {n}")
+        con.commit()
+        con.close()
+
+    def test_api_funciona_sem_as_tabelas_novas(self):
+        self.amostra(AGORA - 10, status="degradado")
+        self.queda(AGORA - 200, AGORA - 100, status="falha_internet")
+        r = painel.api(60)
+        self.assertIsNone(r["quedas"][0]["rota"])
+        self.assertEqual(r["recentes"], ["degradado"])
+        self.assertEqual(r["velocidade"], [])
+        self.assertIsNone(r["velocidade_ultimo"])
+
+
+class VelocidadeBase(ApiBase):
+    def velo(self, epoch, fim=None, down=None, up=None, erro=None):
+        if fim is None and down is not None:
+            fim = epoch + 40
+        return self.sql_id("INSERT INTO velocidade (ts, epoch, fim_epoch, down_mbps, up_mbps, erro) VALUES (?, ?, ?, ?, ?, ?)",
+                           (iso(epoch), epoch, fim, down, up, erro))
+
+    def carga(self, vid, ocioso, down, up):
+        self.sql("INSERT INTO latencia_carga (velocidade_id, ocioso_ms, down_ms, up_ms, down_perda, up_perda) "
+                 "VALUES (?, ?, ?, ?, 0, 0)", (vid, ocioso, down, up))
+
+
+class VelocidadeApiTest(VelocidadeBase):
+    def test_testes_do_periodo_em_ordem(self):
+        self.velo(AGORA - 5000, down=50.0, up=10.0)          # fora do período de 60 min
+        self.velo(AGORA - 1800, down=300.0, up=95.0)
+        self.velo(AGORA - 600, down=280.0, up=90.0)
+        v = painel.api(60)["velocidade"]
+        self.assertEqual([(t["epoch"], t["fim"], t["down"], t["up"], t["erro"]) for t in v],
+                         [(AGORA - 1800, AGORA - 1760, 300.0, 95.0, None), (AGORA - 600, AGORA - 560, 280.0, 90.0, None)])
+
+    def test_ultimo_bem_sucedido_mesmo_fora_do_periodo(self):
+        self.velo(AGORA - 9000, down=40.0, up=8.0)
+        self.velo(AGORA - 7200, down=50.0, up=10.0)
+        self.velo(AGORA - 600, fim=AGORA - 590, erro="HTTP 403")
+        r = painel.api(60)
+        self.assertEqual((r["velocidade_ultimo"]["epoch"], r["velocidade_ultimo"]["down"]), (AGORA - 7200, 50.0))
+        self.assertEqual(len(r["velocidade"]), 1)
+
+    def test_teste_com_erro_vem_com_erro_e_sem_mbps(self):
+        self.velo(AGORA - 600, fim=AGORA - 570, down=280.0, erro="upload passou de 30 s")
+        r = painel.api(60)
+        t = r["velocidade"][0]
+        self.assertEqual((t["erro"], t["down"], t["up"]), ("upload passou de 30 s", None, None))
+        self.assertIsNone(r["velocidade_ultimo"])
+
+    def test_teste_em_andamento_aparece_sem_fim(self):
+        self.velo(AGORA - 20)
+        t = painel.api(60)["velocidade"][0]
+        self.assertEqual((t["fim"], t["down"], t["erro"]), (None, None, None))
+
+    def test_sem_testes(self):
+        r = painel.api(60)
+        self.assertEqual((r["velocidade"], r["velocidade_ultimo"]), ([], None))
+
+    def test_carga_preenchida_ou_nula(self):
+        com = self.velo(AGORA - 1800, down=300.0, up=95.0)
+        self.velo(AGORA - 600, down=280.0, up=90.0)
+        self.carga(com, 20.0, 140.0, 60.0)
+        v = painel.api(60)["velocidade"]
+        self.assertEqual(v[0]["carga"], {"ocioso": 20.0, "down": 140.0, "up": 60.0,
+                                         "nota": {"nome": "Razoável", "cat": "warning", "acrescimo": 120.0, "fase": "down"}})
+        self.assertIsNone(v[1]["carga"])
+
+    def test_ultimo_traz_carga(self):
+        vid = self.velo(AGORA - 7200, down=50.0, up=10.0)
+        self.carga(vid, 20.0, 30.0, 45.0)
+        nota = painel.api(60)["velocidade_ultimo"]["carga"]["nota"]
+        self.assertEqual((nota["nome"], nota["fase"], nota["acrescimo"]), ("Ótimo", "up", 25.0))
+
+
+class NotaCargaTest(unittest.TestCase):
+    def test_limites(self):
+        casos = {0: "Ótimo", 29: "Ótimo", 30: "Bom", 59: "Bom", 60: "Razoável", 199: "Razoável", 200: "Ruim", 500: "Ruim"}
+        for ms, nome in casos.items():
+            self.assertEqual(painel.classificar_acrescimo(ms)[0], nome, ms)
+
+    def test_cores_pelos_tokens_de_status(self):
+        self.assertEqual([painel.classificar_acrescimo(ms)[1] for ms in (10, 40, 100, 300)],
+                         ["good", "good", "warning", "critical"])
+
+    def test_pior_fase_menos_parado(self):
+        self.assertEqual(painel.nota_carga(20.0, 50.0, 230.0),
+                         {"nome": "Ruim", "cat": "critical", "acrescimo": 210.0, "fase": "up"})
+
+    def test_fase_faltando_usa_a_outra(self):
+        self.assertEqual(painel.nota_carga(20.0, None, 60.0)["fase"], "up")
+
+    def test_sem_parado_ou_sem_fases_nao_tem_nota(self):
+        self.assertIsNone(painel.nota_carga(None, 50.0, 60.0))
+        self.assertIsNone(painel.nota_carga(20.0, None, None))
+
+    def test_mais_rapido_em_uso_conta_como_zero(self):
+        self.assertEqual(painel.nota_carga(40.0, 30.0, 35.0)["acrescimo"], 0.0)
+
+
+class JanelaTesteTest(VelocidadeBase):
+    """O pico de latência do próprio teste de velocidade não faz o resumo dizer "instável"."""
+
+    def test_degradado_dentro_da_janela_nao_entra_em_recentes(self):
+        for i in range(12):
+            self.amostra(AGORA - 120 + i * 5)                       # ok antes do teste
+        self.velo(AGORA - 50, fim=AGORA - 10, down=100.0, up=10.0)
+        for e in range(int(AGORA - 50), int(AGORA - 5), 5):
+            self.amostra(e, status="degradado")
+        r = painel.api(60)
+        self.assertNotIn("degradado", r["recentes"])
+        self.assertEqual(len(r["recentes"]), 12)
+
+    def test_teste_em_andamento_tambem_conta(self):
+        self.amostra(AGORA - 60)
+        self.velo(AGORA - 30)
+        for e in (AGORA - 25, AGORA - 20, AGORA - 15, AGORA - 10):
+            self.amostra(e, status="degradado")
+        self.assertEqual(painel.api(60)["recentes"], ["ok"])
+
+    def test_degradado_fora_da_janela_continua(self):
+        self.velo(AGORA - 600, fim=AGORA - 560, down=100.0, up=10.0)
+        for e in (AGORA - 20, AGORA - 15, AGORA - 10):
+            self.amostra(e, status="degradado")
+        self.assertEqual(painel.api(60)["recentes"], ["degradado"] * 3)
+
+    def test_queda_dentro_da_janela_continua(self):
+        self.velo(AGORA - 30)
+        self.amostra(AGORA - 20, status="degradado")
+        self.amostra(AGORA - 10, status="falha_internet")
+        r = painel.api(60)
+        self.assertEqual(r["recentes"], ["falha_internet"])
+        self.assertEqual(r["atual"]["status"], "falha_internet")
+
+    def test_resumo_e_pontos_nao_mudam(self):
+        self.velo(AGORA - 30)
+        self.amostra(AGORA - 20, status="degradado")
+        r = painel.api(60)
+        self.assertEqual(r["resumo"], [{"status": "degradado", "n": 1}])
+        self.assertEqual([p["status"] for p in r["pontos"]], ["degradado"])
+        self.assertEqual(r["atual"]["status"], "degradado")
+
+
+if __name__ == "__main__":
+    unittest.main()

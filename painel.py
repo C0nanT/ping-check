@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Painel web da conexão: lê conexao.db (somente leitura) e serve gráficos em http://127.0.0.1:8080"""
+import errno
 import json
 import os
 import sqlite3
 import sys
+import threading
 import time
+from datetime import date, datetime, timedelta, time as dtime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -25,6 +28,11 @@ def conectar():
 
 def rows(c, sql, args=()):
     return [dict(r) for r in c.execute(sql, args)]
+
+
+def tem_tabela(c, nome):
+    """Tabelas novas só existem depois que o monitor reinicia com o SCHEMA novo; o painel (mode=ro) não as cria."""
+    return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (nome,)).fetchone() is not None
 
 
 COLUNAS = (("gw_avg_ms", "gw"), ("cf_avg_ms", "cf"), ("gg_avg_ms", "gg"), ("gw_loss_pct", "gwl"),
@@ -69,6 +77,142 @@ def banco_tamanho(c, agora):
     return {"bytes": sum(partes.values()), "por_dia": por_dia}
 
 
+DIAS = 30
+FOLGA_FUSO = 43200      # s: o dia vem do ts (hora local do monitor); o epoch só limita a varredura
+
+
+def dias_contados(c, primeiro, ultimo):
+    """{dia: {dia, n, fora, quedas}} dos dias locais de primeiro a ultimo (date, inclusive), pelo prefixo do ts.
+    Só dias com amostra ou queda aparecem."""
+    ini = datetime.combine(primeiro, dtime.min).timestamp() - FOLGA_FUSO
+    fim = datetime.combine(ultimo + timedelta(days=1), dtime.min).timestamp() + FOLGA_FUSO
+    a, b = primeiro.isoformat(), ultimo.isoformat()
+    marcas = ",".join("?" * len(CAIU))
+    out = {}
+    for r in c.execute(f"""SELECT substr(ts, 1, 10) dia, COUNT(*) n, SUM(status IN ({marcas})) fora FROM checks
+                           WHERE epoch >= ? AND epoch < ? GROUP BY dia HAVING dia BETWEEN ? AND ?""",
+                       CAIU + (ini, fim, a, b)):
+        out[r["dia"]] = {"dia": r["dia"], "n": r["n"], "fora": r["fora"], "quedas": 0}
+    for r in c.execute("""SELECT substr(start_ts, 1, 10) dia, COUNT(*) n FROM outages
+                          WHERE start_epoch >= ? AND start_epoch < ? GROUP BY dia HAVING dia BETWEEN ? AND ?""",
+                       (ini, fim, a, b)):
+        out.setdefault(r["dia"], {"dia": r["dia"], "n": 0, "fora": 0, "quedas": 0})["quedas"] = r["n"]
+    return out
+
+
+# Dias anteriores a hoje não mudam: ficam na memória do processo e só hoje é recalculado a cada requisição.
+# Um dia fechado que ganhar amostras depois fica desatualizado até o painel reiniciar (aceito).
+_dias_fechados = {}     # "AAAA-MM-DD" -> item de dias_recentes
+_dias_trava = threading.Lock()
+
+
+def limpar_cache_dias():
+    with _dias_trava:
+        _dias_fechados.clear()
+
+
+def dias_recentes(c, agora):
+    """Os DIAS dias locais até hoje, em ordem; dias sem amostra vêm com n = 0."""
+    hoje = datetime.fromtimestamp(agora).date()
+    lista = [(hoje - timedelta(days=i)).isoformat() for i in range(DIAS - 1, -1, -1)]
+    vazio = lambda d: {"dia": d, "n": 0, "fora": 0, "quedas": 0}
+    with _dias_trava:
+        faltam = [d for d in lista[:-1] if d not in _dias_fechados]
+        if faltam:
+            novos = dias_contados(c, date.fromisoformat(faltam[0]), date.fromisoformat(faltam[-1]))
+            for d in faltam:
+                _dias_fechados[d] = novos.get(d) or vazio(d)
+        for d in [d for d in _dias_fechados if d < lista[0]]:
+            del _dias_fechados[d]
+        fechados = [_dias_fechados[d] for d in lista[:-1]]
+    return fechados + [dias_contados(c, hoje, hoje).get(lista[-1]) or vazio(lista[-1])]
+
+
+def frase_rota(saltos, ultimo_ok, erro, alvo):
+    """Onde o sinal parou, em português simples. O 1º ponto do caminho é o roteador de casa. None se o diagnóstico falhou."""
+    if erro:
+        return None
+    if not ultimo_ok or ultimo_ok <= 1:
+        return "O sinal parou no seu roteador: a internet não está saindo de casa."
+    if any(s["n"] == ultimo_ok and s["ip"] == alvo for s in saltos):
+        return "O sinal chegou até a internet durante o teste: a falha pode ter passado logo depois de começar."
+    return f"O sinal passou do roteador e parou na rede da operadora ({ultimo_ok}º ponto do caminho)."
+
+
+def rotas_das_quedas(c, quedas):
+    """Põe em cada queda a `rota` ({frase, saltos}) do diagnóstico gravado pelo monitor, ou None."""
+    achadas = {}
+    if quedas and tem_tabela(c, "rotas"):
+        ids = [q["id"] for q in quedas]
+        for r in c.execute(f"SELECT outage_id, alvo, saltos, ultimo_ok, erro FROM rotas "
+                           f"WHERE outage_id IN ({','.join('?' * len(ids))}) ORDER BY id", ids):
+            saltos = json.loads(r["saltos"] or "[]")
+            achadas[r["outage_id"]] = {"frase": frase_rota(saltos, r["ultimo_ok"], r["erro"], r["alvo"]),
+                                       "saltos": saltos}
+    for q in quedas:
+        q["rota"] = achadas.get(q["id"])
+
+
+TESTE_MAX = 90          # s: duração máxima de um teste de velocidade sem fim gravado (em andamento ou interrompido)
+TESTE_FOLGA = 2 * INTERVALO   # s depois do fim em que o pico do teste ainda aparece nas amostras
+
+
+def amostras_recentes(c):
+    """Status das 12 amostras mais recentes, sem as `degradado` que caem dentro de um teste de velocidade:
+    o teste satura a conexão e o pico de latência que ele mesmo causa não deve virar "instável"."""
+    if not tem_tabela(c, "velocidade"):
+        return [r["status"] for r in rows(c, "SELECT status FROM checks ORDER BY epoch DESC LIMIT 12")]
+    return [r["status"] for r in rows(c, """
+        SELECT status FROM checks k
+        WHERE NOT (k.status = 'degradado' AND EXISTS (
+            SELECT 1 FROM velocidade v
+            WHERE v.epoch BETWEEN k.epoch - ? AND k.epoch
+              AND k.epoch <= COALESCE(v.fim_epoch, v.epoch + ?) + ?))
+        ORDER BY epoch DESC LIMIT 12""", (TESTE_MAX * 3, TESTE_MAX, TESTE_FOLGA))]
+
+
+def classificar_acrescimo(ms):
+    """Nota da latência sob carga pelo acréscimo (ms) sobre a latência parada; limites de testes públicos de bufferbloat."""
+    if ms < 30:
+        return "Ótimo", "good"
+    if ms < 60:
+        return "Bom", "good"
+    if ms < 200:
+        return "Razoável", "warning"
+    return "Ruim", "critical"
+
+
+def nota_carga(ocioso, down, up):
+    """{nome, cat, acrescimo, fase} pela pior fase (baixando/enviando) menos parado, ou None sem dados."""
+    fases = [(v, f) for v, f in ((down, "down"), (up, "up")) if v is not None]
+    if ocioso is None or not fases:
+        return None
+    pior, fase = max(fases)
+    acrescimo = max(0.0, pior - ocioso)
+    nome, cat = classificar_acrescimo(acrescimo)
+    return {"nome": nome, "cat": cat, "acrescimo": acrescimo, "fase": fase}
+
+
+def velocidade(c, desde):
+    """(testes do período em ordem, último teste bem-sucedido mesmo fora do período). Teste com erro vem sem Mbps."""
+    if not tem_tabela(c, "velocidade"):
+        return [], None
+    carga = ("l.ocioso_ms, l.down_ms, l.up_ms, l.velocidade_id tem_carga" if tem_tabela(c, "latencia_carga")
+             else "NULL ocioso_ms, NULL down_ms, NULL up_ms, NULL tem_carga")
+    junta = "LEFT JOIN latencia_carga l ON l.velocidade_id = v.id" if tem_tabela(c, "latencia_carga") else ""
+    base = f"SELECT v.epoch, v.fim_epoch fim, v.down_mbps, v.up_mbps, v.erro, {carga} FROM velocidade v {junta}"
+
+    def item(r):
+        return {"epoch": r["epoch"], "fim": r["fim"], "erro": r["erro"],
+                "down": None if r["erro"] else r["down_mbps"], "up": None if r["erro"] else r["up_mbps"],
+                "carga": None if r["tem_carga"] is None else
+                {"ocioso": r["ocioso_ms"], "down": r["down_ms"], "up": r["up_ms"],
+                 "nota": nota_carga(r["ocioso_ms"], r["down_ms"], r["up_ms"])}}
+    testes = [item(r) for r in rows(c, base + " WHERE v.epoch >= ? ORDER BY v.epoch", (desde,))]
+    ultimo = rows(c, base + " WHERE v.erro IS NULL AND v.down_mbps IS NOT NULL ORDER BY v.epoch DESC LIMIT 1")
+    return testes, item(ultimo[0]) if ultimo else None
+
+
 def api(minutos):
     agora = time.time()
     desde = agora - minutos * 60
@@ -81,10 +225,10 @@ def api(minutos):
         atual = rows(c, "SELECT epoch, status FROM checks ORDER BY epoch DESC LIMIT 1")
         atual = atual[0] if atual else None
         parado = not atual or agora - atual["epoch"] > PARADO_APOS
-        recentes = [r["status"] for r in rows(c, "SELECT status FROM checks ORDER BY epoch DESC LIMIT 12")]
+        recentes = amostras_recentes(c)
 
         # fim de queda sem end_epoch (monitor morto no meio dela) = primeira amostra com outro status
-        quedas = rows(c, """SELECT status, start_epoch ini,
+        quedas = rows(c, """SELECT id, status, start_epoch ini,
                                    COALESCE(end_epoch, (SELECT MIN(k.epoch) FROM checks k
                                                         WHERE k.epoch > o.start_epoch AND k.status != o.status)) fim
                             FROM outages o WHERE end_epoch IS NULL OR end_epoch >= ?
@@ -95,6 +239,8 @@ def api(minutos):
         quedas = [q for q in quedas if q["fim"] is None or q["fim"] >= desde]
         falhas = {"n": len(quedas),
                   "seg": sum((q["fim"] or agora) - max(q["ini"], desde) for q in quedas)}
+        quedas = quedas[:30]
+        rotas_das_quedas(c, quedas)
 
         # toda queda abre uma linha em outages; só varre checks a partir da mais recente (sem ela, sem queda)
         ini = c.execute("SELECT MAX(start_epoch) FROM outages").fetchone()[0]
@@ -108,11 +254,14 @@ def api(minutos):
                                 (ant[0]["epoch"] if ant else 0,))[0]["e"]
         wifi = rows(c, "SELECT ssid, freq FROM wifi_info ORDER BY id DESC LIMIT 1")
         banco = banco_tamanho(c, agora)
+        dias = dias_recentes(c, agora)
+        testes, ultimo_teste = velocidade(c, desde)
     finally:
         c.close()
-    return {"pontos": pontos, "passo": passo, "resumo": resumo, "quedas": quedas[:30], "falhas": falhas,
+    return {"pontos": pontos, "passo": passo, "resumo": resumo, "quedas": quedas, "falhas": falhas,
             "atual": atual, "recentes": recentes, "ultima_queda": ultima[0]["epoch"] if ultima else None,
-            "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "banco": banco, "agora": agora}
+            "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "banco": banco, "dias": dias,
+            "velocidade": testes, "velocidade_ultimo": ultimo_teste, "agora": agora}
 
 
 class H(BaseHTTPRequestHandler):
@@ -150,11 +299,13 @@ PAGINA = r"""<!doctype html>
 --page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--ring:rgba(11,11,11,.10);
 --s1:#2a78d6;--s2:#eb6834;
 --good:#0ca30c;--warning:#fab219;--critical:#d03b3b;--nodata:#d6d5cf;
---good-bg:rgba(12,163,12,.08);--warning-bg:rgba(250,178,25,.13);--critical-bg:rgba(208,59,59,.09);--nodata-bg:rgba(137,135,129,.10)}
+--good-bg:rgba(12,163,12,.08);--warning-bg:rgba(250,178,25,.13);--critical-bg:rgba(208,59,59,.09);--nodata-bg:rgba(137,135,129,.10);
+--band:rgba(11,11,11,.07)}
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;
 --page:#0d0d0d;--surface:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;--ring:rgba(255,255,255,.10);
 --s1:#3987e5;--s2:#d95926;--nodata:#3a3a37;
---good-bg:rgba(12,163,12,.15);--warning-bg:rgba(250,178,25,.13);--critical-bg:rgba(208,59,59,.18);--nodata-bg:rgba(137,135,129,.12)}}
+--good-bg:rgba(12,163,12,.15);--warning-bg:rgba(250,178,25,.13);--critical-bg:rgba(208,59,59,.18);--nodata-bg:rgba(137,135,129,.12);
+--band:rgba(255,255,255,.08)}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--page);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1000px;margin:0 auto;padding:20px 16px 40px;transition:opacity .2s}
@@ -199,6 +350,10 @@ box-shadow:0 4px 14px rgba(0,0,0,.14);padding:8px 10px;font-size:13px;white-spac
 .list svg{width:22px;height:22px;flex:none}
 .list .o{flex:1;min-width:0}.list .o b{display:block;font-weight:600}.list .o span{color:var(--muted);font-size:13px}
 .list .d{color:var(--ink2);font-size:14px;text-align:right}
+.list li{align-items:flex-start}.list li>svg{margin-top:2px}
+.list .o .rota{display:block;color:var(--ink2);font-size:13px;margin-top:4px}
+.list .o details{margin-top:4px;font-size:13px}.list .o details summary{font-weight:400;color:var(--ink2)}
+.list .o table{margin-top:4px}
 details summary{cursor:pointer;font-weight:600}
 details p{color:var(--ink2);font-size:13px;max-width:80ch}
 .tab{overflow-x:auto}
@@ -206,6 +361,14 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;font-va
 td,th{text-align:left;padding:5px 8px;border-bottom:1px solid var(--grid)}
 th{color:var(--ink2);font-weight:600}td.n,th.n{text-align:right}
 code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4px}
+.dias{display:grid;grid-template-columns:repeat(30,minmax(0,1fr));gap:3px}
+.dias i{display:block;aspect-ratio:1;max-height:34px;border-radius:3px;cursor:default}
+.dias i:hover{outline:2px solid var(--ink);outline-offset:1px}
+.vazio{color:var(--muted);font-size:14px;margin:6px 0 0}
+.carga{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding-top:12px;border-top:1px solid var(--grid)}
+.carga svg{width:22px;height:22px;flex:none;margin-top:1px}
+.carga b{display:block}.carga .sub{font-size:13px;color:var(--muted)}.carga p{margin:2px 0;color:var(--ink2);font-size:14px}
+.diasx{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:4px}
 </style></head><body><main id="m">
 <header>
   <div><h1>Minha internet</h1><div class="upd" id="upd">carregando…</div></div>
@@ -220,10 +383,21 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
   <canvas id="tl"></canvas>
   <div class="leg"><span><i style="background:var(--good)"></i>Funcionando</span><span><i style="background:var(--warning)"></i>Instável ou lenta</span><span><i style="background:var(--critical)"></i>Sem conexão</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
   <div class="tip"></div></section>
+<section class="card"><h3>Últimos 30 dias</h3>
+  <p class="cap">Cada quadrado é um dia, com hoje à direita. A cor mostra quanto do dia a internet funcionou. Este quadro não muda com o período escolhido lá em cima.</p>
+  <div class="dias" id="dias"></div><div class="diasx"><span id="dias0"></span><span id="dias1"></span></div>
+  <div class="leg"><span><i style="background:var(--good)"></i>Funcionou 99% do tempo ou mais</span><span><i style="background:var(--warning)"></i>De 95% a 99%</span><span><i style="background:var(--critical)"></i>Menos de 95%</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
+  <div class="tip"></div></section>
 <section class="card"><h3>Rapidez</h3>
   <p class="cap">Tempo que um sinal leva para ir e voltar, em milissegundos (ms). Quanto <b>menor</b>, melhor: abaixo de 50 ms é ótimo, acima de 150 ms a internet parece lenta.</p>
   <canvas id="c1" class="chart"></canvas>
-  <div class="leg"><span><i class="ln" style="background:var(--s1)"></i>Até a internet</span><span><i class="ln" style="background:var(--s2)"></i>Até o roteador (dentro de casa)</span><span><i style="background:var(--critical-bg);box-shadow:inset 0 0 0 1px var(--critical)"></i>Sem conexão</span></div>
+  <div class="leg"><span><i class="ln" style="background:var(--s1)"></i>Até a internet</span><span><i class="ln" style="background:var(--s2)"></i>Até o roteador (dentro de casa)</span><span><i style="background:var(--critical-bg);box-shadow:inset 0 0 0 1px var(--critical)"></i>Sem conexão</span><span><i style="background:var(--band);box-shadow:inset 0 0 0 1px var(--axis)"></i>Teste de velocidade (a resposta fica mais lenta enquanto ele roda)</span></div>
+  <div class="tip"></div></section>
+<section class="card"><h3>Velocidade</h3>
+  <p class="cap">Quanto a internet consegue baixar e enviar, em megabits por segundo (Mbps). Quanto <b>maior</b>, melhor. O monitor testa sozinho de tempos em tempos (normalmente a cada 30 minutos; cada teste gasta cerca de 35 MB).</p>
+  <canvas id="c3" class="chart"></canvas><p class="vazio" id="vvazio" hidden></p>
+  <div class="leg"><span><i class="ln" style="background:var(--s1)"></i>Baixar (download)</span><span><i class="ln" style="background:var(--s2)"></i>Enviar (upload)</span></div>
+  <div class="carga" id="carga" hidden></div>
   <div class="tip"></div></section>
 <section class="card"><h3>Força do sinal Wi-Fi</h3>
   <p class="cap">Quanto <b>maior</b>, melhor. Abaixo de 35% a conexão pode ficar lenta ou cair: tente ficar mais perto do roteador.</p>
@@ -274,6 +448,10 @@ const pctSinal=dbm=>dbm==null?null:Math.max(0,Math.min(100,2*(dbm+100)));
 const sinal=p=>p==null?null:p>=70?['Excelente','good']:p>=50?['Bom','good']:p>=35?['Razoável','warning']:['Fraco','critical'];
 const banda=f=>{const m=parseInt(f);return m>=5900?'6 GHz':m>=4900?'5 GHz':'2,4 GHz'};
 
+const TESTE_MAX=90;   // mesmo TESTE_MAX do painel.py: teste sem fim gravado
+const janelasTeste=()=>(D.velocidade||[]).map(t=>[t.epoch,t.fim??Math.min(D.agora,t.epoch+TESTE_MAX)]);
+const emTeste=(e,J)=>J.some(([a,b])=>e>=a&&e<=b+10);
+
 let D=null,MIN=60;
 try{MIN=+localStorage.getItem('periodo')||60}catch(e){}
 const janela=()=>[D.agora-MIN*60,D.agora];
@@ -286,7 +464,7 @@ function eixoX(g,x0,x1,L,pw,y){const longo=x1-x0>36*3600,n=pw<480?2:4;g.fillStyl
   for(let i=0;i<=n;i++){const e=x0+(x1-x0)*i/n,d=new Date(e*1000);
     g.textAlign=i===0?'left':i===n?'right':'center';
     g.fillText((longo?d.toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','')+' ':'')+hm(e),L+pw*i/n,y)}}
-function perto(P,e){let m=null,dm=Infinity;for(const p of P){const d=Math.abs(p.epoch-e);if(d<dm){dm=d;m=p}}return dm<=limite()?m:null}
+function perto(P,e,lim=limite()){let m=null,dm=Infinity;for(const p of P){const d=Math.abs(p.epoch-e);if(d<dm){dm=d;m=p}}return dm<=lim?m:null}
 function nice(v){const s=v/4,p=10**Math.floor(Math.log10(s)),m=s/p;return(m<=1?1:m<=2?2:m<=2.5?2.5:m<=5?5:10)*p*4}
 
 function hero(){
@@ -305,15 +483,17 @@ function hero(){
 
 function tiles(){
   const P=D.pontos,tot=D.resumo.reduce((s,r)=>s+r.n,0),bad=D.resumo.filter(r=>caiu(r.status)).reduce((s,r)=>s+r.n,0);
-  const up=tot?100*(tot-bad)/tot:null,f=D.falhas,w=D.wifi;
+  const up=tot?100*(tot-bad)/tot:null,f=D.falhas,w=D.wifi,vu=D.velocidade_ultimo;
   const inet=avg(P.map(p=>p.inet)),perda=avg(P.map(p=>p.perda)),sn=avg(P.map(p=>p.sinal));
   const T=[
-    ['Conexão funcionando',up==null?null:[num(up,up===100?0:1)+'%',up>=99?'good':up>=95?'warning':'critical'],
+    ['Conexão funcionando',up==null?null:[num(up,up===100?0:1)+'%',upCat(up)],
       up==null?'sem medições no período':'do tempo · '+(f.n?`fora do ar ${f.n} ${f.n===1?'vez':'vezes'}, ${dur(f.seg)} no total`:'nenhuma queda')],
     ['Rapidez',rapidez(inet),inet==null?'':`resposta média de ${num(inet)} ms`],
     ['Estabilidade',estab(perda),perda==null?'':`${num(perda,1)}% dos dados se perderam no caminho`],
-    ['Sinal do Wi-Fi',sinal(sn),sn==null?'':`${num(sn)}%`+(w&&w.ssid?` · rede “${w.ssid}”`+(w.freq?' · '+banda(w.freq):''):'')]];
-  $('tiles').innerHTML=T.map(([l,v,s])=>`<div class="card tile"><div class="lbl">${l}</div><div class="val">${v?icon(v[1])+esc(v[0]):'–'}</div><div class="sub">${esc(s)}</div></div>`).join('')}
+    ['Sinal do Wi-Fi',sinal(sn),sn==null?'':`${num(sn)}%`+(w&&w.ssid?` · rede “${w.ssid}”`+(w.freq?' · '+banda(w.freq):''):'')],
+    ['Velocidade',vu?[`${num(vu.down)} / ${num(vu.up)} Mbps`,null]:null,
+      vu?`Baixar (download) / Enviar (upload) · medido há ${dur(D.agora-(vu.fim||vu.epoch))}`:'nenhum teste de velocidade ainda']];
+  $('tiles').innerHTML=T.map(([l,v,s])=>`<div class="card tile"><div class="lbl">${l}</div><div class="val">${v?(v[1]?icon(v[1]):'')+esc(v[0]):'–'}</div><div class="sub">${esc(s)}</div></div>`).join('')}
 
 function timeline(){
   const cv=$('tl'),P=D.pontos,{g,W,H}=prep(cv),T=2,ph=H-T-22,[x0,x1]=janela(),lim=limite(),xs=e=>(e-x0)/(x1-x0)*W;
@@ -330,8 +510,12 @@ function timeline(){
     return{x,html:`<div class="t">${esc(quando(p?p.epoch:e))}</div>${st}`}};
   cv._mark=h=>{g.strokeStyle=css('--ink');g.lineWidth=1.5;g.beginPath();g.moveTo(Math.round(h.x)+.5,0);g.lineTo(Math.round(h.x)+.5,T+ph+2);g.stroke()}}
 
-function lineChart(cv,series,{un='',max=null,faixas=false}={}){
-  const P=D.pontos,{g,W,H}=prep(cv),L=52,R=10,T=8,B=24,pw=W-L-R,ph=H-T-B,[x0,x1]=janela(),lim=limite();
+// o: un, max, faixas (quedas em vermelho), P (pontos; padrão D.pontos), lim (maior distância ligada por linha),
+//    marcas (bolinha em cada ponto, para séries esparsas), janelas ([[ini,fim]] desenhadas como faixa --band),
+//    esq (margem esquerda para os rótulos do eixo Y)
+function lineChart(cv,series,o={}){
+  const {un='',max=null,faixas=false,P=D.pontos,lim=limite(),marcas=false,janelas=[],esq=52}=o;
+  const {g,W,H}=prep(cv),L=esq,R=10,T=8,B=24,pw=W-L-R,ph=H-T-B,[x0,x1]=janela();
   const xs=e=>L+(e-x0)/(x1-x0)*pw;
   const vals=series.flatMap(s=>P.map(p=>p[s.k])).filter(v=>v!=null).sort((a,b)=>a-b);
   // escala pelo percentil 98: um pico isolado não achata o resto do gráfico (ele sai pelo topo)
@@ -339,6 +523,8 @@ function lineChart(cv,series,{un='',max=null,faixas=false}={}){
   g.lineWidth=1;g.strokeStyle=css('--grid');g.fillStyle=css('--muted');g.textAlign='right';
   for(let i=1;i<=4;i++){const v=hi*i/4,y=Math.round(ys(v))+.5;g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(num(v)+un,L-8,y+4)}
   g.fillText('0'+un,L-8,T+ph+4);
+  if(janelas.length){g.fillStyle=css('--band');
+    for(const [a,b] of janelas){const xa=Math.max(L,xs(a)),xb=Math.min(W-R,xs(b));if(xb+2>xa)g.fillRect(xa,T,Math.max(xb-xa,2),ph)}}
   if(faixas){g.fillStyle=css('--critical-bg');
     P.forEach((p,i)=>{if(!caiu(p.status))return;const n=P[i+1],fim=n&&n.epoch-p.epoch<=lim?n.epoch:p.epoch+D.passo;
       const a=xs(p.epoch);g.fillRect(a,T,Math.max(xs(fim)-a,2),ph)})}
@@ -347,32 +533,93 @@ function lineChart(cv,series,{un='',max=null,faixas=false}={}){
   g.lineWidth=2;g.lineJoin='round';g.lineCap='round';
   for(const s of [...series].reverse()){g.strokeStyle=css(s.c);g.beginPath();let ant=null;
     for(const p of P){const v=p[s.k];if(v==null){ant=null;continue}const x=xs(p.epoch),y=ys(v);
-      ant&&p.epoch-ant.epoch<=lim?g.lineTo(x,y):g.moveTo(x,y);ant=p}g.stroke()}
+      ant&&p.epoch-ant.epoch<=lim?g.lineTo(x,y):g.moveTo(x,y);ant=p}g.stroke();
+    if(marcas){g.fillStyle=css(s.c);for(const p of P){const v=p[s.k];if(v==null)continue;g.beginPath();g.arc(xs(p.epoch),ys(v),3,0,7);g.fill()}}}
   g.restore();
   eixoX(g,x0,x1,L,pw,H-6);
-  cv._base=()=>lineChart(cv,series,{un,max,faixas});
-  cv._h=x=>{const p=perto(P,x0+(x-L)/pw*(x1-x0));if(!p)return null;
+  cv._base=()=>lineChart(cv,series,o);
+  cv._h=x=>{const p=perto(P,x0+(x-L)/pw*(x1-x0),lim);if(!p)return null;
     let html=`<div class="t">${esc(quando(p.epoch))}</div>`;
     for(const s of series)html+=`<div class="r"><i style="background:var(${s.c})"></i><b>${p[s.k]==null?'–':num(p[s.k])+un}</b>${esc(s.n)}</div>`;
     if(caiu(p.status))html+=`<div class="r"><i class="q" style="background:var(--critical)"></i>${esc(stNome(p.status))}</div>`;
+    if(emTeste(p.epoch,janelas))html+=`<div class="r"><i class="q" style="background:var(--band);box-shadow:inset 0 0 0 1px var(--axis)"></i>teste de velocidade rodando</div>`;
     return{x:xs(p.epoch),p,html}};
   cv._mark=h=>{g.strokeStyle=css('--axis');g.lineWidth=1;g.beginPath();g.moveTo(Math.round(h.x)+.5,T);g.lineTo(Math.round(h.x)+.5,T+ph);g.stroke();
     for(const s of series){const v=h.p[s.k];if(v==null)continue;g.beginPath();g.arc(h.x,ys(v),5,0,7);g.fillStyle=css(s.c);g.fill();
       g.lineWidth=2;g.strokeStyle=css('--surface');g.stroke()}}}
 
+function fraseCarga(n){
+  const quem=n.fase==='up'?'Quando alguém envia algo (fotos, vídeos, backup)':'Quando alguém baixa algo';
+  if(n.acrescimo<1)return quem+', a resposta não fica mais lenta: ótimo para chamadas de vídeo e jogos.';
+  const fim={Ótimo:'nem dá para perceber.',Bom:'quase não se nota.',Razoável:'chamadas de vídeo podem travar.',
+    Ruim:'chamadas de vídeo e jogos ficam bem ruins.'}[n.nome];
+  return `${quem}, a resposta fica ${num(n.acrescimo)} ms mais lenta: ${fim}`}
+function velocidade(){
+  const V=(D.velocidade||[]).filter(t=>t.down!=null||t.up!=null).map(t=>({epoch:t.fim||t.epoch,down:t.down,up:t.up,status:'ok'}));
+  const dif=V.slice(1).map((p,i)=>p.epoch-V[i].epoch).sort((a,b)=>a-b),med=dif.length?dif[dif.length>>1]:0;
+  const vazio=$('vvazio'),vu=D.velocidade_ultimo;
+  vazio.hidden=!!V.length;
+  vazio.textContent=vu?'Nenhum teste de velocidade neste período. O último foi '+quando(vu.fim||vu.epoch)+'.'
+    :'Ainda não há nenhum teste de velocidade. O primeiro roda cerca de 1 minuto depois de o monitor iniciar.';
+  // liga só testes consecutivos: lacuna maior que ~2 intervalos fica sem linha
+  lineChart($('c3'),[{k:'down',c:'--s1',n:'baixar (download)'},{k:'up',c:'--s2',n:'enviar (upload)'}],
+    {un:' Mbps',P:V,lim:med?2.5*med:3600,marcas:true,esq:76});
+  const c=vu&&vu.carga,n=c&&c.nota,el=$('carga');
+  el.hidden=!n;
+  if(n)el.innerHTML=`${icon(n.cat)}<div><b>Quando a internet está em uso: ${esc(n.nome)}</b><p>${esc(fraseCarga(n))}</p>`+
+    `<div class="sub">Resposta parada ${num(c.ocioso)} ms · baixando ${num(c.down)} ms · enviando ${num(c.up)} ms · teste ${esc(quando(vu.fim||vu.epoch))}</div></div>`}
+
+const CAMINHO_ABERTO=new Set();   // "ver caminho" abertos sobrevivem à atualização a cada 5 s
+function caminho(q){const r=q.rota;if(!r)return '';
+  let h=r.frase?`<span class="rota">${esc(r.frase)}</span>`:'';
+  if(r.saltos&&r.saltos.length)h+=`<details data-id="${q.id}"${CAMINHO_ABERTO.has(q.id)?' open':''}><summary>ver caminho</summary>`+
+    `<div class="tab"><table><tr><th class="n">Ponto</th><th>Endereço (IP)</th><th class="n">Tempo</th></tr>${r.saltos.map(s=>
+      `<tr><td class="n">${s.n}${s.n===1?' (roteador)':''}</td><td>${s.ip?`<code>${esc(s.ip)}</code>`:'sem resposta'}</td><td class="n">${s.ms==null?'–':num(s.ms,1)+' ms'}</td></tr>`).join('')}</table></div></details>`;
+  return h}
 function quedas(){
   const Q=D.quedas,f=D.falhas;
   $('qcap').textContent=f.n?`${f.n} ${f.n===1?'falha':'falhas'} no período, somando ${dur(f.seg)} sem conexão.`+(f.n>Q.length?` Mostrando as ${Q.length} mais recentes.`:''):'';
   $('q').innerHTML=Q.length?Q.map(q=>{const i=ST[q.status]||{nome:q.status},agora=q.fim==null;
-      return `<li>${icon('critical')}<div class="o"><b>${esc(i.nome)}</b><span>${esc(quando(q.ini))}${i.dica?' · '+esc(i.dica):''}</span></div>`+
+      return `<li>${icon('critical')}<div class="o"><b>${esc(i.nome)}</b><span>${esc(quando(q.ini))}${i.dica?' · '+esc(i.dica):''}</span>${caminho(q)}</div>`+
         `<div class="d">${agora?'<b>acontecendo agora</b><br>há '+esc(dur(D.agora-q.ini)):'durou '+esc(dur(q.fim-q.ini))}</div></li>`}).join('')
     :`<li>${icon('good')}<div class="o"><b>Nenhuma falha neste período</b></div></li>`}
+
+const DIA_ST={good:'Funcionou bem',warning:'Algumas falhas',critical:'Muitas falhas',nodata:'Sem medição'};
+const upCat=up=>up>=99?'good':up>=95?'warning':'critical';   // mesmas faixas do tile "Conexão funcionando"
+function horas(s){return s<3600?Math.round(s/60)+' min':num(s/3600,s<36000?1:0)+' h'}
+function diaInfo(d){const [a,m,dd]=d.dia.split('-').map(Number),dt=new Date(a,m-1,dd),hoje=d===D.dias[D.dias.length-1];
+  const nome=hoje?'Hoje':dt.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit'});
+  if(!d.n)return{k:'nodata',nome,linhas:['Nenhuma medição neste dia']};
+  const up=100*(d.n-d.fora)/d.n,k=upCat(up),med=d.n*5,
+    total=hoje?Math.max(med,D.agora-dt.getTime()/1000):86400;
+  return{k,nome,linhas:[`${num(up,up===100?0:1)}% do tempo funcionando`,
+    d.quedas?`Caiu ${d.quedas} ${d.quedas===1?'vez':'vezes'} · ${dur(d.fora*5)} fora do ar`:(d.fora?`${dur(d.fora*5)} fora do ar`:'Nenhuma queda'),
+    `Medido ${horas(med)} de ${horas(total)}`+(hoje?' até agora':'')]}}
+function dias(){
+  const el=$('dias'),X=D.dias.map(diaInfo);
+  el.innerHTML=X.map((x,i)=>`<i data-i="${i}" style="background:var(--${x.k})" aria-label="${esc(x.nome+': '+DIA_ST[x.k]+'. '+x.linhas.join('. '))}"></i>`).join('');
+  const f=d=>{const [a,m,dd]=d.split('-');return dd+'/'+m};
+  $('dias0').textContent=f(D.dias[0].dia);$('dias1').textContent='hoje';
+  const card=el.parentElement,tip=card.querySelector('.tip');
+  el.onpointermove=ev=>{const q=ev.target.closest('i[data-i]');if(!q){tip.style.display='none';return}
+    const x=X[+q.dataset.i];
+    tip.innerHTML=`<div class="t">${esc(x.nome)}</div><div class="r"><i class="q" style="background:var(--${x.k})"></i><b>${esc(DIA_ST[x.k])}</b></div>`+
+      x.linhas.map(l=>`<div class="r">${esc(l)}</div>`).join('');
+    tip.style.display='block';
+    const cr=card.getBoundingClientRect(),r=q.getBoundingClientRect(),tw=tip.offsetWidth;
+    let left=r.left-cr.left+r.width/2-tw/2;left=Math.max(8,Math.min(left,card.clientWidth-tw-8));
+    tip.style.left=left+'px';tip.style.top=(r.bottom-cr.top+6)+'px'};
+  el.onpointerleave=()=>{tip.style.display='none'}}
 
 function tecnico(){
   const P=D.pontos,a=k=>avg(P.map(p=>p[k])),tot=D.resumo.reduce((s,r)=>s+r.n,0)||1;
   const M=[['Resposta do roteador (gateway)',a('gw'),' ms'],['Resposta da Cloudflare (1.1.1.1)',a('cf'),' ms'],['Resposta do Google (8.8.8.8)',a('gg'),' ms'],
     ['Perda de pacotes até o roteador',a('gwl'),' %',2],['Perda de pacotes até a Cloudflare',a('cfl'),' %',2],['Perda de pacotes até o Google',a('ggl'),' %',2],
     ['Tempo de resposta do DNS',a('dns'),' ms'],['Sinal Wi-Fi',a('dbm'),' dBm']];
+  const vu=D.velocidade_ultimo,c=vu&&vu.carga;
+  if(vu)M.push(['Último teste: baixar (download)',vu.down,' Mbps'],['Último teste: enviar (upload)',vu.up,' Mbps']);
+  if(c)M.push(['Último teste: resposta parada (mediana)',c.ocioso,' ms'],['Último teste: resposta baixando (mediana)',c.down,' ms'],
+    ['Último teste: resposta enviando (mediana)',c.up,' ms']);
   $('tec').innerHTML=`<p>A cada 5 segundos o monitor envia sinais (ping) para o roteador e para dois servidores na internet (Cloudflare e Google), testa o DNS e lê a força do sinal Wi-Fi.
     Se o roteador não responde, o problema está dentro de casa; se o roteador responde mas a internet não, o problema é da operadora.
     “Instável” significa que algum pacote se perdeu ou que a internet demorou mais de 150 ms nos dois servidores (Cloudflare e Google); se só um deles estiver lento, a internet não é considerada instável.</p>
@@ -390,8 +637,9 @@ function draw(){
   D.pontos.forEach(p=>{const v=[p.cf,p.gg].filter(x=>x!=null);p.inet=v.length?v.reduce((s,x)=>s+x)/v.length:null;
     p.perda=Math.max(p.gwl||0,p.cfl||0,p.ggl||0);p.sinal=pctSinal(p.dbm)});
   document.querySelectorAll('.tip').forEach(t=>t.style.display='none');
-  hero();tiles();timeline();
-  lineChart($('c1'),[{k:'inet',c:'--s1',n:'até a internet'},{k:'gw',c:'--s2',n:'até o roteador'}],{un:' ms',faixas:true});
+  hero();tiles();timeline();dias();
+  lineChart($('c1'),[{k:'inet',c:'--s1',n:'até a internet'},{k:'gw',c:'--s2',n:'até o roteador'}],{un:' ms',faixas:true,janelas:janelasTeste()});
+  velocidade();
   lineChart($('c2'),[{k:'sinal',c:'--s1',n:'sinal'}],{un:'%',max:100});
   quedas();tecnico();
   $('upd').textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR')+' · atualiza sozinho a cada 5 s'+textoBanco(D.banco)}
@@ -411,14 +659,22 @@ async function load(){
   finally{$('m').classList.remove('carregando')}}
 document.querySelectorAll('#per button').forEach(b=>b.onclick=()=>{MIN=+b.dataset.min;try{localStorage.setItem('periodo',MIN)}catch(e){}
   marcaPeriodo();$('m').classList.add('carregando');load()});
-['tl','c1','c2'].forEach(id=>hover($(id)));
+['tl','c1','c2','c3'].forEach(id=>hover($(id)));
+$('q').addEventListener('toggle',ev=>{const id=+ev.target.dataset.id;if(!id)return;
+  ev.target.open?CAMINHO_ABERTO.add(id):CAMINHO_ABERTO.delete(id)},true);
 addEventListener('resize',draw);matchMedia('(prefers-color-scheme:dark)').onchange=draw;
 if(![60,360,1440,10080].includes(MIN))MIN=60;
 marcaPeriodo();load();setInterval(load,5000);
 </script></body></html>"""
 
 if __name__ == "__main__":
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        sys.exit(f"A porta {PORT} já está em uso (o painel do Docker já está rodando?). "
+                 f"Pare o container com `make stop` ou use outra porta: PORT=8081 make web")
     print(f"Painel em http://127.0.0.1:{PORT}", file=sys.stderr, flush=True)
     try:
         srv.serve_forever()

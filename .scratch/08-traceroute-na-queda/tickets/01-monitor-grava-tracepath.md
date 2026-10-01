@@ -8,11 +8,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Tabela `rotas` com `CREATE TABLE IF NOT EXISTS`; um banco existente a ganha ao reiniciar o monitor
-- [ ] Parser puro do `tracepath` testado com saídas de exemplo: caminho completo, `no reply` no meio, só o gateway, nenhum salto
-- [ ] Só `falha_internet` dispara; no máximo um diagnóstico por queda
+- [x] Tabela `rotas` com `CREATE TABLE IF NOT EXISTS`; um banco existente a ganha ao reiniciar o monitor
+- [x] Parser puro do `tracepath` testado com saídas de exemplo: caminho completo, `no reply` no meio, só o gateway, nenhum salto
+- [x] Só `falha_internet` dispara; no máximo um diagnóstico por queda
 - [ ] Ciclo de 5 s não atrasa enquanto o `tracepath` roda (timeout ~30 s)
-- [ ] `tracepath` ausente ou com erro → linha com `erro`, queda registrada normalmente
-- [ ] Dockerfile instala `iputils-tracepath`; funciona sem root no container e no host
-- [ ] `make rotas` aparece em `make help`
-- [ ] `make test` passa
+- [x] `tracepath` ausente ou com erro → linha com `erro`, queda registrada normalmente
+- [x] Dockerfile instala `iputils-tracepath`; funciona sem root no container e no host
+- [x] `make rotas` aparece em `make help`
+- [x] `make test` passa

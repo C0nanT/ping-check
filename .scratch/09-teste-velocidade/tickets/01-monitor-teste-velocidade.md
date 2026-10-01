@@ -6,13 +6,13 @@
 
 **Blocked by:** 01-testes-unitarios/01 (Monitor testável + `make test`), 08-traceroute-na-queda/01 (mesmo laço e mesmo padrão de executor)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Tabela `velocidade` com `CREATE TABLE IF NOT EXISTS` (`epoch`, `fim_epoch`, `down_mbps`, `up_mbps`, `bytes_down`, `bytes_up`, `erro`)
-- [ ] Função pura de agendamento testada: antes do intervalo não; depois sim; status de queda não; intervalo 0 nunca; primeiro teste ~1 min após iniciar
-- [ ] Cálculo de Mbps testado; tempo medido do primeiro byte/início do envio até o fim
-- [ ] Nunca dois testes ao mesmo tempo; timeout ~30 s por fase
-- [ ] Erro (timeout, HTTP) vira linha com `erro`, sem derrubar o monitor
-- [ ] Só stdlib (`urllib`)
-- [ ] `make velocidade` aparece em `make help`; `VELOCIDADE_A_CADA` documentado no `CLAUDE.md`
-- [ ] `make test` passa
+- [x] Tabela `velocidade` com `CREATE TABLE IF NOT EXISTS` (`epoch`, `fim_epoch`, `down_mbps`, `up_mbps`, `bytes_down`, `bytes_up`, `erro`)
+- [x] Função pura de agendamento testada: antes do intervalo não; depois sim; status de queda não; intervalo 0 nunca; primeiro teste ~1 min após iniciar
+- [x] Cálculo de Mbps testado; tempo medido do primeiro byte/início do envio até o fim
+- [x] Nunca dois testes ao mesmo tempo; timeout ~30 s por fase
+- [x] Erro (timeout, HTTP) vira linha com `erro`, sem derrubar o monitor
+- [x] Só stdlib (`urllib`)
+- [x] `make velocidade` aparece em `make help`; `VELOCIDADE_A_CADA` documentado no `CLAUDE.md`
+- [x] `make test` passa

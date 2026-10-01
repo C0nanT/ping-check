@@ -9,6 +9,9 @@ services:
     # roda como root só para o systemd-inhibit; o monitor cai para 1000:1000 (ver Dockerfile)
     # tini como PID 1: repassa o SIGTERM ao monitor
     init: true
+    environment:
+      # minutos entre testes de velocidade (~35 MB cada); 0 desliga
+      VELOCIDADE_A_CADA: ${VELOCIDADE_A_CADA:-30}
     # AppArmor do Docker bloqueia o D-Bus do host, usado pelo nmcli
     security_opt:
       - apparmor=unconfined
@@ -27,4 +30,33 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 30s
+      retries: 3
+
+  painel:
+    # mesma imagem do monitor (construída pelo serviço acima); sem build próprio
+    image: ping-check
+    pull_policy: never
+    container_name: ping-check-painel
+    restart: unless-stopped
+    # bind em 127.0.0.1 do host: acessível só desta máquina, sem publicar porta na rede
+    network_mode: host
+    # só leitura no banco (mode=ro); sem root, sem systemd-inhibit, sem D-Bus
+    user: "1000:1000"
+    init: true
+    command: ["python3", "-u", "painel.py"]
+    environment:
+      PORT: ${PORT:-8080}
+    volumes:
+      # leitura e escrita: um leitor SQLite em WAL precisa do -shm
+      - .:/app
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/api?min=1' % os.environ.get('PORT','8080'), timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
       retries: 3

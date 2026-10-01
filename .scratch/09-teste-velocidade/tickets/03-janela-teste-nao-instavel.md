@@ -6,11 +6,11 @@
 
 **Blocked by:** 02 (Tile e gráfico de velocidade)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Durante e logo após um teste, o cartão principal não muda para "instável" só por amostras `degradado` dentro da janela
-- [ ] Quedas reais (status de `CAIU`) dentro da janela continuam aparecendo normalmente
-- [ ] Faixa da janela visível no gráfico de rapidez, com legenda, nos dois temas
-- [ ] Uptime e lista de quedas não mudam
-- [ ] Nenhuma amostra é alterada no banco
-- [ ] `make test` passa
+- [x] Durante e logo após um teste, o cartão principal não muda para "instável" só por amostras `degradado` dentro da janela
+- [x] Quedas reais (status de `CAIU`) dentro da janela continuam aparecendo normalmente
+- [x] Faixa da janela visível no gráfico de rapidez, com legenda, nos dois temas
+- [x] Uptime e lista de quedas não mudam
+- [x] Nenhuma amostra é alterada no banco
+- [x] `make test` passa

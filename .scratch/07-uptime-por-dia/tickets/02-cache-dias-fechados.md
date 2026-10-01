@@ -6,11 +6,11 @@
 
 **Blocked by:** 01 (Cartão "Últimos 30 dias")
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Segunda chamada a `api()` devolve os mesmos dias fechados sem consultá-los de novo
-- [ ] Amostras novas de hoje mudam só o item de hoje
-- [ ] Virada do dia: o dia que fechou passa para o cache e a janela anda um dia
-- [ ] Tempo de `api()` com banco sintético de 30 dias registrado antes/depois na entrega
-- [ ] Cache seguro com o `ThreadingHTTPServer` (requisições simultâneas)
-- [ ] `make test` passa
+- [x] Segunda chamada a `api()` devolve os mesmos dias fechados sem consultá-los de novo
+- [x] Amostras novas de hoje mudam só o item de hoje
+- [x] Virada do dia: o dia que fechou passa para o cache e a janela anda um dia
+- [x] Tempo de `api()` com banco sintético de 30 dias registrado antes/depois na entrega
+- [x] Cache seguro com o `ThreadingHTTPServer` (requisições simultâneas)
+- [x] `make test` passa

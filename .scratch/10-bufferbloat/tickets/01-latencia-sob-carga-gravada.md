@@ -6,11 +6,11 @@
 
 **Blocked by:** 09-teste-velocidade/01 (Monitor faz o teste de velocidade)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Tabela `latencia_carga` com `CREATE TABLE IF NOT EXISTS` (`velocidade_id`, `ocioso_ms`, `down_ms`, `up_ms`, `down_perda`, `up_perda`)
-- [ ] Parser puro do `ping` sem `-q` testado: várias respostas → mediana; respostas faltando → perda; nenhuma → mediana `None` e perda 100%
-- [ ] Falha na medida de latência não impede gravar a velocidade
-- [ ] Sem tráfego extra além do próprio teste e dos pings; funciona sem root
-- [ ] `make velocidade` mostra parado/baixando/enviando
-- [ ] `make test` passa
+- [x] Tabela `latencia_carga` com `CREATE TABLE IF NOT EXISTS` (`velocidade_id`, `ocioso_ms`, `down_ms`, `up_ms`, `down_perda`, `up_perda`)
+- [x] Parser puro do `ping` sem `-q` testado: várias respostas → mediana; respostas faltando → perda; nenhuma → mediana `None` e perda 100%
+- [x] Falha na medida de latência não impede gravar a velocidade
+- [x] Sem tráfego extra além do próprio teste e dos pings; funciona sem root
+- [x] `make velocidade` mostra parado/baixando/enviando
+- [x] `make test` passa

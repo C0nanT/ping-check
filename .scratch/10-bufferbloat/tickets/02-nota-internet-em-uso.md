@@ -6,10 +6,10 @@
 
 **Blocked by:** 09-teste-velocidade/02 (Tile e gráfico de velocidade), 01 (Latência sob carga gravada)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Função pura da nota pelo acréscimo (pior fase − parado), testada nos limites 29/30, 59/60, 199/200 ms
-- [ ] `carga` = `{ocioso, down, up, nota}` ou `null`; teste sem medida de latência não quebra o cartão
-- [ ] Cores da nota pelos tokens de status (`good`/`warning`/`critical`)
-- [ ] Frase em português simples, no tom do mapa `ST`
-- [ ] Testes via `api()`; `make test` passa
+- [x] Função pura da nota pelo acréscimo (pior fase − parado), testada nos limites 29/30, 59/60, 199/200 ms
+- [x] `carga` = `{ocioso, down, up, nota}` ou `null`; teste sem medida de latência não quebra o cartão
+- [x] Cores da nota pelos tokens de status (`good`/`warning`/`critical`)
+- [x] Frase em português simples, no tom do mapa `ST`
+- [x] Testes via `api()`; `make test` passa

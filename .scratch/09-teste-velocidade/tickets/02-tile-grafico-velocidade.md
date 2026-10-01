@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-testes-unitarios/02 (Testes de `api()` com banco temporário), 01 (Monitor faz o teste de velocidade)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Testes do período no `/api`; último teste bem-sucedido aparece mesmo fora do período; testes com erro trazem `erro` e sem Mbps
-- [ ] Tile com termos simples ("Baixar (download)", "Enviar (upload)", Mbps)
-- [ ] Sem nenhum teste ainda → tile e cartão explicam isso, sem quebrar
-- [ ] Linhas ligadas só entre testes consecutivos (lacuna maior que ~2 intervalos não liga)
-- [ ] Tooltip compartilhado funciona no gráfico novo
-- [ ] Testes via `api()`; `make test` passa
+- [x] Testes do período no `/api`; último teste bem-sucedido aparece mesmo fora do período; testes com erro trazem `erro` e sem Mbps
+- [x] Tile com termos simples ("Baixar (download)", "Enviar (upload)", Mbps)
+- [x] Sem nenhum teste ainda → tile e cartão explicam isso, sem quebrar
+- [x] Linhas ligadas só entre testes consecutivos (lacuna maior que ~2 intervalos não liga)
+- [x] Tooltip compartilhado funciona no gráfico novo
+- [x] Testes via `api()`; `make test` passa
