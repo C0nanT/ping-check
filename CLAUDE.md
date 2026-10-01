@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Home connection monitor (Linux, Portuguese UI/comments/identifiers). Two standalone Python 3 scripts, stdlib only — no dependencies, no build, no tests, no linter. Not a git repo.
+Home connection monitor (Linux, Portuguese UI/comments/identifiers). Two standalone Python 3 scripts, stdlib only — no dependencies, no build, no linter, tests via `make test` (stdlib `unittest`). Not a git repo.
 
 - `monitor.py` — collector loop; writes samples to `conexao.db` (SQLite, WAL).
 - `painel.py` — read-only web dashboard on `http://127.0.0.1:8080` (`PORT` env overrides). HTML/CSS/JS is inlined in the `PAGINA` string; no external assets.
@@ -13,6 +13,7 @@ Home connection monitor (Linux, Portuguese UI/comments/identifiers). Two standal
 
 All via `make` (run `make help` for the list). Python is pinned to `/usr/bin/python3`.
 
+- `make test` — runs the `unittest` suite in `tests/` (no network, Docker or real DB).
 - `make run` — monitor in foreground. `make web` — dashboard in foreground.
 - `make start` / `stop` / `restart` / `status` / `logs` — monitor in Docker (`docker compose`, container `ping-check`, `restart: unless-stopped`). Only the monitor runs in the container; the dashboard still runs on the host via `make web`.
 - `make summary` / `outages` / `last` — ad-hoc SQL reports via the `$(SQL)` one-liner in the Makefile (no `sqlite3` CLI needed). Add new reports the same way.

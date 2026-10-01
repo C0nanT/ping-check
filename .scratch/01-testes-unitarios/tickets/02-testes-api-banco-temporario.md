@@ -6,14 +6,14 @@
 
 **Blocked by:** 01 (Monitor testável + `make test`)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Poucas amostras → `pontos` sem agrupar e `passo` = intervalo do monitor
-- [ ] Mais que `MAX_PONTOS` → média dos valores e pior status por balde
-- [ ] Baldes vazios somem (buraco de "sem medição" preservado)
-- [ ] Queda com `end_epoch` NULL termina na primeira amostra seguinte com outro status
-- [ ] Queda aberta com monitor parado termina na última amostra
-- [ ] `falhas` (número e segundos) recortado ao período
-- [ ] `atual`, `recentes`, `inicio_atual` e `ultima_queda` cobertos
-- [ ] Agrupamento testado só via `api()`, nunca chamando `reduz()` direto
-- [ ] Nenhum teste toca no `conexao.db` real
+- [x] Poucas amostras → `pontos` sem agrupar e `passo` = intervalo do monitor
+- [x] Mais que `MAX_PONTOS` → média dos valores e pior status por balde
+- [x] Baldes vazios somem (buraco de "sem medição" preservado)
+- [x] Queda com `end_epoch` NULL termina na primeira amostra seguinte com outro status
+- [x] Queda aberta com monitor parado termina na última amostra
+- [x] `falhas` (número e segundos) recortado ao período
+- [x] `atual`, `recentes`, `inicio_atual` e `ultima_queda` cobertos
+- [x] Agrupamento testado só via `api()`, nunca chamando `reduz()` direto
+- [x] Nenhum teste toca no `conexao.db` real

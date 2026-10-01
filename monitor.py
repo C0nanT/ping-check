@@ -88,6 +88,21 @@ def default_route():
     return None, None
 
 
+def parse_ping(out):
+    """Lê a saída do `ping -q` e retorna dict loss/avg/max/jitter.
+
+    Sem linha de perda, loss fica 100; sem linha de RTT, avg/max/jitter ficam None.
+    """
+    res = {"loss": 100.0, "avg": None, "max": None, "jitter": None}
+    m = LOSS_RE.search(out)
+    if m:
+        res["loss"] = float(m.group(1))
+    m = RTT_RE.search(out)
+    if m:
+        res["avg"], res["max"], res["jitter"] = float(m.group(2)), float(m.group(3)), float(m.group(4))
+    return res
+
+
 def ping(host):
     """Retorna dict loss/avg/max/jitter. Loss 100 se tudo falhou."""
     res = {"loss": 100.0, "avg": None, "max": None, "jitter": None}
@@ -101,13 +116,7 @@ def ping(host):
             timeout=PING_COUNT * PING_SPACING + PING_TIMEOUT + 3).stdout
     except Exception:
         return res
-    m = LOSS_RE.search(out)
-    if m:
-        res["loss"] = float(m.group(1))
-    m = RTT_RE.search(out)
-    if m:
-        res["avg"], res["max"], res["jitter"] = float(m.group(2)), float(m.group(3)), float(m.group(4))
-    return res
+    return parse_ping(out)
 
 
 def dns_check():

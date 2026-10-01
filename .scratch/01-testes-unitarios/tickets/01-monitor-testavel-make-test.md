@@ -6,11 +6,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] `make test` existe, aparece em `make help` e usa o `$(PYTHON)` do Makefile
-- [ ] Testes para cada status de `classify()` e para a prioridade quando dois problemas ocorrem juntos
-- [ ] Parser do `ping` extraído como função pura; testes com saída normal, 100% de perda e sem linha de RTT
-- [ ] Importar `monitor` nos testes não tem efeito colateral
-- [ ] `make run` continua gravando amostras iguais às de antes
-- [ ] `CLAUDE.md` deixa de dizer "no tests" e cita `make test`
+- [x] `make test` existe, aparece em `make help` e usa o `$(PYTHON)` do Makefile
+- [x] Testes para cada status de `classify()` e para a prioridade quando dois problemas ocorrem juntos
+- [x] Parser do `ping` extraído como função pura; testes com saída normal, 100% de perda e sem linha de RTT
+- [x] Importar `monitor` nos testes não tem efeito colateral
+- [x] `make run` continua gravando amostras iguais às de antes
+- [x] `CLAUDE.md` deixa de dizer "no tests" e cita `make test`
