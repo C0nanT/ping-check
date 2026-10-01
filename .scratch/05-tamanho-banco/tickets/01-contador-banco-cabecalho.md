@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-testes-unitarios/02 (Testes de `api()` com banco temporário)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] `banco.bytes` = soma do arquivo principal, `-wal` e `-shm` existentes; ausência do `-wal` não quebra
-- [ ] `por_dia` = tamanho do arquivo principal ÷ dias desde a primeira amostra; `null` com menos de 1 hora de dados
-- [ ] Formato pt-BR: KB abaixo de 1 MB, MB com 1 casa, GB com 2 casas; `por_dia` nulo mostra só o tamanho
-- [ ] Texto discreto (`--muted`), sem quebrar o layout no celular
-- [ ] Testes via `api()`; `make test` passa
-- [ ] Lista de campos do `/api` no `CLAUDE.md` atualizada
+- [x] `banco.bytes` = soma do arquivo principal, `-wal` e `-shm` existentes; ausência do `-wal` não quebra
+- [x] `por_dia` = tamanho do arquivo principal ÷ dias desde a primeira amostra; `null` com menos de 1 hora de dados
+- [x] Formato pt-BR: KB abaixo de 1 MB, MB com 1 casa, GB com 2 casas; `por_dia` nulo mostra só o tamanho
+- [x] Texto discreto (`--muted`), sem quebrar o layout no celular
+- [x] Testes via `api()`; `make test` passa
+- [x] Lista de campos do `/api` no `CLAUDE.md` atualizada

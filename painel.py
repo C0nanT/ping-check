@@ -53,6 +53,22 @@ def pontos_do_periodo(c, desde, agora):
                 (desde, desde, tam)), tam
 
 
+def banco_tamanho(c, agora):
+    """Tamanho do banco no disco (arquivo principal + -wal + -shm que existirem) e crescimento por dia.
+    por_dia = arquivo principal ÷ dias desde a primeira amostra; None com menos de 1 h de dados."""
+    partes = {}
+    for sufixo in ("", "-wal", "-shm"):
+        try:
+            partes[sufixo] = os.path.getsize(DB + sufixo)
+        except OSError:
+            partes[sufixo] = 0
+    primeira = c.execute("SELECT MIN(epoch) FROM checks").fetchone()[0]
+    por_dia = None
+    if primeira is not None and agora - primeira >= 3600:
+        por_dia = partes[""] / ((agora - primeira) / 86400)
+    return {"bytes": sum(partes.values()), "por_dia": por_dia}
+
+
 def api(minutos):
     agora = time.time()
     desde = agora - minutos * 60
@@ -91,11 +107,12 @@ def api(minutos):
             inicio_atual = rows(c, "SELECT MIN(epoch) e FROM checks WHERE epoch > ?",
                                 (ant[0]["epoch"] if ant else 0,))[0]["e"]
         wifi = rows(c, "SELECT ssid, freq FROM wifi_info ORDER BY id DESC LIMIT 1")
+        banco = banco_tamanho(c, agora)
     finally:
         c.close()
     return {"pontos": pontos, "passo": passo, "resumo": resumo, "quedas": quedas[:30], "falhas": falhas,
             "atual": atual, "recentes": recentes, "ultima_queda": ultima[0]["epoch"] if ultima else None,
-            "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "agora": agora}
+            "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "banco": banco, "agora": agora}
 
 
 class H(BaseHTTPRequestHandler):
@@ -363,6 +380,11 @@ function tecnico(){
     <div class="tab"><table><tr><th>Situação</th><th>Código</th><th class="n">Medições</th><th class="n">% do tempo</th></tr>${[...D.resumo].sort((x,y)=>y.n-x.n).map(r=>
       `<tr><td>${esc(stNome(r.status))}</td><td><code>${esc(r.status)}</code></td><td class="n">${num(r.n)}</td><td class="n">${num(100*r.n/tot,2)}%</td></tr>`).join('')}</table></div>`}
 
+function tamanho(b){const f=(v,d)=>v.toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
+  return b<1048576?f(b/1024,0)+' KB':b<1073741824?f(b/1048576,1)+' MB':f(b/1073741824,2)+' GB'}
+function textoBanco(b){if(!b)return '';
+  return ' · Banco: '+tamanho(b.bytes)+(b.por_dia==null?'':' · cresce ~'+tamanho(b.por_dia)+'/dia')}
+
 function draw(){
   if(!D)return;
   D.pontos.forEach(p=>{const v=[p.cf,p.gg].filter(x=>x!=null);p.inet=v.length?v.reduce((s,x)=>s+x)/v.length:null;
@@ -372,7 +394,7 @@ function draw(){
   lineChart($('c1'),[{k:'inet',c:'--s1',n:'até a internet'},{k:'gw',c:'--s2',n:'até o roteador'}],{un:' ms',faixas:true});
   lineChart($('c2'),[{k:'sinal',c:'--s1',n:'sinal'}],{un:'%',max:100});
   quedas();tecnico();
-  $('upd').textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR')+' · atualiza sozinho a cada 5 s'}
+  $('upd').textContent='Atualizado às '+new Date().toLocaleTimeString('pt-BR')+' · atualiza sozinho a cada 5 s'+textoBanco(D.banco)}
 
 function hover(cv){const card=cv.parentElement,tip=card.querySelector('.tip');
   cv.onpointermove=ev=>{if(!cv._h)return;const r=cv.getBoundingClientRect(),h=cv._h(ev.clientX-r.left);cv._base();

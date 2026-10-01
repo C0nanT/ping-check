@@ -218,3 +218,34 @@ class IsolamentoTest(ApiBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BancoTest(ApiBase):
+    def test_bytes_soma_principal_wal_e_shm(self):
+        for sufixo, n in (("-wal", 1000), ("-shm", 500)):
+            with open(self.db + sufixo, "wb") as f:
+                f.write(b"x" * n)
+        r = painel.api(60)
+        esperado = sum(os.path.getsize(self.db + s) for s in ("", "-wal", "-shm") if os.path.exists(self.db + s))
+        self.assertEqual(r["banco"]["bytes"], esperado)
+        self.assertGreaterEqual(r["banco"]["bytes"], os.path.getsize(self.db) + 1500)
+
+    def test_sem_wal_nao_quebra(self):
+        for s in ("-wal", "-shm"):
+            if os.path.exists(self.db + s):
+                os.remove(self.db + s)
+        self.assertEqual(painel.api(60)["banco"]["bytes"], os.path.getsize(self.db))
+
+    def test_por_dia_nulo_com_menos_de_1h(self):
+        self.amostra(AGORA - 1800)
+        self.assertIsNone(painel.api(60)["banco"]["por_dia"])
+
+    def test_por_dia_nulo_sem_amostras(self):
+        self.assertIsNone(painel.api(60)["banco"]["por_dia"])
+
+    def test_por_dia_usa_so_arquivo_principal(self):
+        self.amostra(AGORA - 2 * 86400)
+        with open(self.db + "-wal", "wb") as f:
+            f.write(b"x" * 100000)
+        b = painel.api(60)["banco"]
+        self.assertAlmostEqual(b["por_dia"], os.path.getsize(self.db) / 2)
