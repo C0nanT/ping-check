@@ -1,6 +1,8 @@
+import inspect
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -733,10 +735,6 @@ class HandlerTest(ApiBase):
                 self.assertEqual(self.get("/api?" + q)[0], 400)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TesteAgoraTest(VelocidadeBase):
     """Botão "Fazer teste completo agora": pedido por arquivo e estado do teste em andamento."""
 
@@ -794,3 +792,26 @@ class TesteAgoraTest(VelocidadeBase):
             urllib.request.urlopen(req)
         self.assertEqual(e.exception.code, 429)
         self.assertFalse(os.path.exists(self.pedido))
+
+
+class ContratoMonitorTest(unittest.TestCase):
+    """Valores que painel.py copia do monitor.py: se um lado mudar sozinho, o botão de teste manual
+    ou as contagens de queda quebram em silêncio."""
+
+    def test_arquivo_de_pedido_tem_o_mesmo_nome(self):
+        self.assertEqual(os.path.basename(painel.PEDIDO), os.path.basename(monitor.PEDIDO_COMPLETO))
+
+    def test_validade_do_pedido(self):
+        self.assertEqual(painel.PEDIDO_VALIDADE, monitor.PEDIDO_VALIDADE)
+
+    def test_intervalo_entre_amostras(self):
+        self.assertEqual(painel.INTERVALO, monitor.INTERVAL)
+
+    def test_status_de_queda_sao_os_de_classify_menos_ok_e_degradado(self):
+        devolvidos = set(re.findall(r'return "(\w+)"', inspect.getsource(monitor.classify)))
+        self.assertLessEqual({"ok", "degradado"}, devolvidos)
+        self.assertEqual(set(painel.CAIU), devolvidos - {"ok", "degradado"})
+
+
+if __name__ == "__main__":
+    unittest.main()

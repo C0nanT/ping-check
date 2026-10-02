@@ -6,10 +6,10 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Alterar o nome do arquivo de pedido, a validade, o intervalo ou um status de queda em só um dos lados faz `make test` falhar (verificar mudando temporariamente cada valor)
-- [ ] Um status novo possível em `classify()` que não esteja na lista de queda do painel nem seja `ok`/`degradado` é pego pelo teste
-- [ ] Nenhuma classe de teste fica depois de uma guarda `__main__`; `TesteAgoraTest` continua rodando em `make test`
-- [ ] O painel não importa o monitor em produção
-- [ ] `make test` passa sem rede, Docker nem banco real
+- [x] Alterar o nome do arquivo de pedido, a validade, o intervalo ou um status de queda em só um dos lados faz `make test` falhar (verificar mudando temporariamente cada valor)
+- [x] Um status novo possível em `classify()` que não esteja na lista de queda do painel nem seja `ok`/`degradado` é pego pelo teste
+- [x] Nenhuma classe de teste fica depois de uma guarda `__main__`; `TesteAgoraTest` continua rodando em `make test`
+- [x] O painel não importa o monitor em produção
+- [x] `make test` passa sem rede, Docker nem banco real
