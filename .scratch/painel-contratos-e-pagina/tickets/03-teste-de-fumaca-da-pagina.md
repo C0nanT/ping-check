@@ -6,9 +6,9 @@
 
 **Blocked by:** 02 (a página já terá os campos novos; o teste descreve a versão que vai ser separada).
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] `GET /` devolve 200, `text/html; charset=utf-8` e o conteúdo da página
-- [ ] Todo id usado pelo JS (`getElementById`/seletores por id) existe no HTML; remover um id no HTML faz o teste falhar
-- [ ] Um erro de sintaxe introduzido no JS faz o teste falhar quando `node` está instalado; o teste é pulado (skip) sem `node`
-- [ ] Nenhuma dependência nova; `make test` passa sem rede, Docker nem banco real
+- [x] `GET /` devolve 200, `text/html; charset=utf-8` e o conteúdo da página
+- [x] Todo id usado pelo JS (`getElementById`/seletores por id) existe no HTML; remover um id no HTML faz o teste falhar
+- [x] Um erro de sintaxe introduzido no JS faz o teste falhar quando `node` está instalado; o teste é pulado (skip) sem `node`
+- [x] Nenhuma dependência nova; `make test` passa sem rede, Docker nem banco real
