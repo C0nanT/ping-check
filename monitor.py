@@ -10,7 +10,9 @@ A cada WIFI_INFO_EVERY s grava também BSSID/canal/taxa via nmcli.
 Quedas (status != ok) viram linhas na tabela `outages` com início/fim.
 Ao abrir uma queda `falha_internet`, roda um tracepath em segundo plano e grava o caminho em `rotas`.
 A cada VELOCIDADE_A_CADA min (internet no ar), faz um teste de velocidade em segundo plano e grava em
-`velocidade`, com a latência parado/baixando/enviando em `latencia_carga`.
+`velocidade`, com a latência parado/baixando/enviando em `latencia_carga`. Nas horas de
+VELOCIDADE_COMPLETO_HORAS faz no lugar um teste completo (download maior, várias conexões), marcado em
+`velocidade_completo`.
 """
 import concurrent.futures as cf
 import json
@@ -27,6 +29,9 @@ import urllib.request
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conexao.db")
+# arquivo criado pelo painel (botão "Fazer teste completo agora"); mesmo nome em painel.py
+PEDIDO_COMPLETO = os.path.join(os.path.dirname(DB_PATH), "pedido_teste_completo")
+PEDIDO_VALIDADE = 600               # s: pedido mais velho é descartado (ex.: internet fora do ar esse tempo todo)
 INTERVAL = 5            # segundos entre ciclos
 PING_COUNT = 4          # pacotes por alvo por ciclo
 PING_SPACING = 0.2      # s entre pacotes
@@ -48,6 +53,15 @@ VELOCIDADE_HOST = "https://speed.cloudflare.com"
 DOWN_BYTES = 25_000_000
 UP_BYTES = 10_000_000
 FASE_TIMEOUT = 30                   # s por fase (download, upload)
+# Teste completo: o de 25 MB mede mais a arrancada da conexão que a velocidade dela, então algumas vezes
+# ao dia baixa por COMPLETO_DURACAO s com COMPLETO_FLUXOS conexões, descartando os COMPLETO_AQUECER s
+# iniciais (~450 MB a 300 Mbps). Horas locais separadas por vírgula; vazio desliga.
+VELOCIDADE_COMPLETO_HORAS = [int(h) for h in os.environ.get("VELOCIDADE_COMPLETO_HORAS", "9,15,21").split(",")
+                             if h.strip()]
+COMPLETO_FLUXOS = 4
+COMPLETO_AQUECER = 2                # s
+COMPLETO_DURACAO = 10               # s medidos depois do aquecimento
+COMPLETO_PEDIDO = 99_000_000        # bytes por GET: o Cloudflare recusa (403) a partir de 100 MB
 # o User-Agent padrão do urllib leva 403 da Cloudflare
 VELOCIDADE_HEADERS = {"User-Agent": "ping-check/1.0 (monitor de conexao)"}
 LAT_ALVO = "1.1.1.1"
@@ -118,6 +132,12 @@ CREATE TABLE IF NOT EXISTS latencia_carga (
     velocidade_id INTEGER PRIMARY KEY,
     ocioso_ms REAL, down_ms REAL, up_ms REAL,  -- medianas
     down_perda REAL, up_perda REAL             -- %
+);
+
+-- testes de velocidade completos (download maior, várias conexões); gravada no início do teste
+CREATE TABLE IF NOT EXISTS velocidade_completo (
+    velocidade_id INTEGER PRIMARY KEY,
+    fluxos INTEGER, segundos REAL          -- conexões em paralelo e duração medida do download
 );
 """
 
@@ -293,6 +313,38 @@ def hora_de_testar(agora, inicio, ultimo, status, a_cada_min):
     return agora - ultimo >= a_cada_min * 60
 
 
+def hora_do_completo(agora, ultimo, status, horas):
+    """Teste completo agora? Na primeira vez em cada hora local de `horas`, nunca com a internet fora do ar."""
+    if not horas or status not in ("ok", "degradado"):
+        return False
+    t = time.localtime(agora)
+    if t.tm_hour not in horas:
+        return False
+    if ultimo is None:
+        return True
+    u = time.localtime(ultimo)
+    return (u.tm_year, u.tm_yday, u.tm_hour) != (t.tm_year, t.tm_yday, t.tm_hour)
+
+
+def pedido_completo(agora, caminho=None):
+    """O painel pediu um teste completo? Pedido mais velho que PEDIDO_VALIDADE é apagado e ignorado."""
+    caminho = caminho or PEDIDO_COMPLETO
+    try:
+        velho = agora - os.path.getmtime(caminho) > PEDIDO_VALIDADE
+    except OSError:
+        return False
+    if velho:
+        apagar_pedido(caminho)
+    return not velho
+
+
+def apagar_pedido(caminho=None):
+    try:
+        os.remove(caminho or PEDIDO_COMPLETO)
+    except FileNotFoundError:
+        pass
+
+
 def mbps(n_bytes, segundos):
     return n_bytes * 8 / segundos / 1e6 if segundos > 0 else None
 
@@ -311,6 +363,53 @@ def baixar():
             if time.monotonic() > prazo:
                 raise TimeoutError(f"download passou de {FASE_TIMEOUT} s")
     return n, time.monotonic() - t0
+
+
+def abrir_download():
+    req = urllib.request.Request(f"{VELOCIDADE_HOST}/__down?bytes={COMPLETO_PEDIDO}", headers=VELOCIDADE_HEADERS)
+    return urllib.request.urlopen(req, timeout=FASE_TIMEOUT)
+
+
+def baixar_completo(fluxos=COMPLETO_FLUXOS, aquecer=COMPLETO_AQUECER, duracao=COMPLETO_DURACAO, abrir=None):
+    """Download por tempo: `fluxos` conexões repetindo GETs até o fim; conta só os bytes que chegam nos
+    `duracao` s depois de `aquecer` s contados do primeiro byte. (bytes, s), como baixar()."""
+    abrir = abrir or abrir_download
+    total, erros = [0], []
+    trava, chegou, parar = threading.Lock(), threading.Event(), threading.Event()
+
+    def fluxo():
+        try:
+            while not parar.is_set():
+                with abrir() as r:
+                    while not parar.is_set():
+                        b = r.read(65536)
+                        if not b:
+                            break
+                        with trava:
+                            total[0] += len(b)
+                        chegou.set()
+        except Exception as e:
+            if not parar.is_set():
+                erros.append(e)
+    ths = [threading.Thread(target=fluxo, daemon=True) for _ in range(fluxos)]
+    for t in ths:
+        t.start()
+    try:
+        if not chegou.wait(FASE_TIMEOUT):
+            raise erros[0] if erros else TimeoutError(f"download sem resposta em {FASE_TIMEOUT} s")
+        time.sleep(aquecer)
+        with trava:
+            n0, t0 = total[0], time.monotonic()
+        time.sleep(duracao)
+        with trava:
+            n1, t1 = total[0], time.monotonic()
+    finally:
+        parar.set()
+    for t in ths:
+        t.join(timeout=3)
+    if len(erros) == fluxos:    # todas as conexões caíram: a medida não vale
+        raise erros[0]
+    return n1 - n0, t1 - t0
 
 
 class CorpoUpload:
@@ -383,8 +482,9 @@ def _com_ping(fase):
     return r, lat
 
 
-def teste_velocidade():
-    """Latência parado → download (com ping) → upload (com ping). Nunca levanta exceção: falha vira `erro`."""
+def teste_velocidade(fase_down=None):
+    """Latência parado → download (com ping) → upload (com ping). Nunca levanta exceção: falha vira `erro`.
+    fase_down() → (bytes, s); padrão baixar(), o teste completo passa baixar_completo()."""
     res = {"down_mbps": None, "up_mbps": None, "bytes_down": None, "bytes_up": None,
            "erro": None, "carga": None, "fim_epoch": None}
     try:
@@ -393,7 +493,7 @@ def teste_velocidade():
         parado = None
     lat_down = lat_up = None
     try:
-        (n, seg), lat_down = _com_ping(baixar)
+        (n, seg), lat_down = _com_ping(fase_down or baixar)
         res["bytes_down"], res["down_mbps"] = n, mbps(n, seg)
         (n, seg), lat_up = _com_ping(enviar)
         res["bytes_up"], res["up_mbps"] = n, mbps(n, seg)
@@ -408,9 +508,19 @@ def teste_velocidade():
     return res
 
 
-def iniciar_velocidade(db, epoch, ts):
+def iniciar_velocidade(db, epoch, ts, completo=False):
     """Abre a linha do teste (fim_epoch NULL = em andamento: o painel não chama de instável a lentidão que ele causa)."""
-    return db.execute("INSERT INTO velocidade(ts, epoch) VALUES(?, ?)", (ts, epoch)).lastrowid
+    vid = db.execute("INSERT INTO velocidade(ts, epoch) VALUES(?, ?)", (ts, epoch)).lastrowid
+    if completo:
+        db.execute("INSERT INTO velocidade_completo(velocidade_id, fluxos, segundos) VALUES(?, ?, ?)",
+                   (vid, COMPLETO_FLUXOS, COMPLETO_DURACAO))
+    return vid
+
+
+def ultimo_completo(db):
+    """Início do último teste completo (sobrevive a reinício: não repete o da mesma hora)."""
+    return db.execute("SELECT MAX(v.epoch) FROM velocidade v JOIN velocidade_completo c ON c.velocidade_id = v.id"
+                      ).fetchone()[0]
 
 
 def gravar_velocidade(db, vid, res):
@@ -511,6 +621,7 @@ def main():
     open_outage = None  # (id, status)
     last_wifi_info = 0.0
     ultimo_velocidade = None
+    ultimo_compl = ultimo_completo(db)
     print(f"[{start_ts}] monitor iniciado -> {DB_PATH}", flush=True)
 
     while not stop["flag"]:
@@ -567,10 +678,20 @@ def main():
                         fundo.iniciar("rota", lambda: tracepath(ROTA_ALVO),
                                       lambda db_, res, oid=oid, e=epoch, t=ts: gravar_rota(db_, oid, e, t, ROTA_ALVO, res))
 
-            if not fundo.ocupado("velocidade") and hora_de_testar(epoch, inicio, ultimo_velocidade, status, VELOCIDADE_A_CADA):
-                ultimo_velocidade = epoch
-                vid = iniciar_velocidade(db, epoch, ts)
-                fundo.iniciar("velocidade", teste_velocidade, lambda db_, res, vid=vid: fim_velocidade(db_, vid, res))
+            # o completo tem prioridade e conta como teste normal (reinicia o intervalo)
+            if not fundo.ocupado("velocidade"):
+                # pedido do painel só é atendido com a internet no ar; até lá fica esperando (até PEDIDO_VALIDADE)
+                pedido = status in ("ok", "degradado") and pedido_completo(epoch)
+                completo = pedido or hora_do_completo(epoch, ultimo_compl, status, VELOCIDADE_COMPLETO_HORAS)
+                if completo or hora_de_testar(epoch, inicio, ultimo_velocidade, status, VELOCIDADE_A_CADA):
+                    ultimo_velocidade = epoch
+                    if completo:
+                        ultimo_compl = epoch
+                    if pedido:
+                        apagar_pedido()
+                    vid = iniciar_velocidade(db, epoch, ts, completo)
+                    fundo.iniciar("velocidade", lambda c=completo: teste_velocidade(baixar_completo if c else None),
+                                  lambda db_, res, vid=vid: fim_velocidade(db_, vid, res))
 
             fundo.colher(db)
 

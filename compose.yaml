@@ -12,6 +12,8 @@ services:
     environment:
       # minutos entre testes de velocidade (~35 MB cada); 0 desliga
       VELOCIDADE_A_CADA: ${VELOCIDADE_A_CADA:-30}
+      # horas locais do teste completo (download de ~10 s com 4 conexões, ~1 GB cada a 600 Mbps); vazio desliga
+      VELOCIDADE_COMPLETO_HORAS: ${VELOCIDADE_COMPLETO_HORAS-9,15,21}
     # AppArmor do Docker bloqueia o D-Bus do host, usado pelo nmcli
     security_opt:
       - apparmor=unconfined
@@ -33,6 +35,8 @@ services:
       retries: 3
 
   painel:
+    # fora do `docker compose up -d`: só sobe com --profile painel (o dia a dia é `make web`)
+    profiles: ["painel"]
     # mesma imagem do monitor (construída pelo serviço acima); sem build próprio
     image: ping-check
     pull_policy: never

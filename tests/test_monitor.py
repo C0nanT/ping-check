@@ -1,6 +1,9 @@
 import importlib
+import io
 import os
+import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import unittest
@@ -412,6 +415,12 @@ class TesteVelocidadeTest(unittest.TestCase):
         r = monitor.teste_velocidade()
         self.assertEqual((r["down_mbps"], r["up_mbps"], r["erro"], r["carga"]), (100.0, 20.0, None, None))
 
+    def test_usa_a_fase_de_download_recebida(self):
+        self.troca(baixar=lambda: (1, 1.0), enviar=lambda: (10_000_000, 4.0), ping_parado=lambda: None,
+                   ping_continuo=lambda: None, parar_ping=lambda p: None)
+        r = monitor.teste_velocidade(lambda: (75_000_000, 1.0))
+        self.assertEqual(r["down_mbps"], 600.0)
+
     def test_erro_na_fase_vira_erro_sem_levantar(self):
         def quebra():
             raise TimeoutError("download passou de 30 s")
@@ -422,6 +431,107 @@ class TesteVelocidadeTest(unittest.TestCase):
         self.assertIn("30 s", r["erro"])
         self.assertIsNone(r["down_mbps"])
         self.assertIsNone(r["up_mbps"])
+
+
+class HoraDoCompletoTest(unittest.TestCase):
+    H = [9, 15, 21]
+
+    @staticmethod
+    def em(hora, minuto=0, dia=2):
+        return time.mktime((2026, 10, dia, hora, minuto, 0, 0, 0, -1))   # hora local, como o monitor usa
+
+    def test_so_nas_horas_configuradas(self):
+        self.assertTrue(monitor.hora_do_completo(self.em(15, 10), None, "ok", self.H))
+        self.assertFalse(monitor.hora_do_completo(self.em(14, 59), None, "ok", self.H))
+
+    def test_uma_vez_por_hora_inclusive_apos_reinicio(self):
+        self.assertFalse(monitor.hora_do_completo(self.em(15, 50), self.em(15, 2), "ok", self.H))
+        self.assertTrue(monitor.hora_do_completo(self.em(21, 0), self.em(15, 2), "ok", self.H))
+        self.assertTrue(monitor.hora_do_completo(self.em(9, 0, dia=3), self.em(9, 0), "ok", self.H))
+
+    def test_nunca_fora_do_ar_e_lista_vazia_desliga(self):
+        self.assertTrue(monitor.hora_do_completo(self.em(9), None, "degradado", self.H))
+        for st in ("sem_wifi", "falha_lan", "falha_internet", "falha_dns"):
+            self.assertFalse(monitor.hora_do_completo(self.em(9), None, st, self.H), st)
+        self.assertFalse(monitor.hora_do_completo(self.em(9), None, "ok", []))
+
+
+class BaixarCompletoTest(unittest.TestCase):
+    """Sem rede: cada conexão é um fluxo falso que entrega 10 kB a cada ~1 ms."""
+
+    class Fluxo:
+        def __init__(self, abertos):
+            self.abertos = abertos
+
+        def __enter__(self):
+            self.abertos.append(self)
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n):
+            time.sleep(0.001)
+            return b"x" * 10_000
+
+    def test_soma_as_conexoes_e_mede_so_depois_do_aquecimento(self):
+        abertos, antes = [], threading.active_count()
+        n, seg = monitor.baixar_completo(fluxos=3, aquecer=0.05, duracao=0.2, abrir=lambda: self.Fluxo(abertos))
+        self.assertEqual(len(abertos), 3)
+        self.assertAlmostEqual(seg, 0.2, delta=0.05)
+        self.assertGreater(n, 0)
+        self.assertEqual(n % 10_000, 0)
+        self.assertEqual(threading.active_count(), antes)   # as conexões param no fim da medida
+
+    def test_refaz_o_pedido_quando_o_arquivo_acaba(self):
+        pedidos = []
+
+        def abrir():
+            pedidos.append(1)
+            return io.BytesIO(b"x" * 1000)
+        n, _ = monitor.baixar_completo(fluxos=1, aquecer=0, duracao=0.05, abrir=abrir)
+        self.assertGreater(len(pedidos), 1)
+
+    def test_todas_as_conexoes_falhando_levanta(self):
+        def abrir():
+            raise OSError("HTTP 403")
+        with self.assertRaises(OSError):
+            monitor.baixar_completo(fluxos=2, aquecer=0, duracao=0.05, abrir=abrir)
+
+
+class PedidoCompletoTest(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        self.arq = os.path.join(d, "pedido_teste_completo")
+
+    def test_sem_arquivo_nao_ha_pedido(self):
+        self.assertFalse(monitor.pedido_completo(1000.0, self.arq))
+
+    def test_pedido_recente_vale_e_some_ao_apagar(self):
+        open(self.arq, "w").close()
+        os.utime(self.arq, (900, 900))
+        self.assertTrue(monitor.pedido_completo(1000.0, self.arq))
+        monitor.apagar_pedido(self.arq)
+        self.assertFalse(os.path.exists(self.arq))
+        monitor.apagar_pedido(self.arq)                            # já apagado: sem erro
+
+    def test_pedido_velho_e_descartado(self):
+        open(self.arq, "w").close()
+        os.utime(self.arq, (100, 100))
+        self.assertFalse(monitor.pedido_completo(100 + monitor.PEDIDO_VALIDADE + 1, self.arq))
+        self.assertFalse(os.path.exists(self.arq))
+
+
+class IniciarVelocidadeTest(unittest.TestCase):
+    def test_completo_marca_e_sobrevive_a_reinicio(self):
+        db = sqlite3.connect(":memory:")
+        db.executescript(monitor.SCHEMA)
+        self.assertIsNone(monitor.ultimo_completo(db))
+        monitor.iniciar_velocidade(db, 100.0, "t1", completo=True)
+        monitor.iniciar_velocidade(db, 200.0, "t2")
+        self.assertEqual(monitor.ultimo_completo(db), 100.0)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM velocidade_completo").fetchone()[0], 1)
 
 
 class CorpoUploadTest(unittest.TestCase):

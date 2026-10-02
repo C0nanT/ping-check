@@ -6,6 +6,8 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from unittest import mock
 
@@ -37,7 +39,8 @@ class ApiBase(unittest.TestCase):
         con.close()
         painel.limpar_cache_dias()
         self.addCleanup(painel.limpar_cache_dias)
-        for alvo in (mock.patch.object(painel, "DB", self.db),
+        self.pedido = os.path.join(self.dir, "pedido_teste_completo")
+        for alvo in (mock.patch.object(painel, "DB", self.db), mock.patch.object(painel, "PEDIDO", self.pedido),
                      mock.patch.object(painel.time, "time", return_value=AGORA)):
             alvo.start()
             self.addCleanup(alvo.stop)
@@ -470,6 +473,19 @@ class BancoAntigoTest(ApiBase):
         self.assertEqual(r["recentes"], ["degradado"])
         self.assertEqual(r["velocidade"], [])
         self.assertIsNone(r["velocidade_ultimo"])
+        self.assertIsNone(r["velocidade_completo"])
+
+    def test_velocidade_sem_a_tabela_de_completos(self):
+        con = sqlite3.connect(self.db)
+        con.executescript(monitor.SCHEMA)
+        con.execute("DROP TABLE velocidade_completo")
+        con.execute("INSERT INTO velocidade (ts, epoch, fim_epoch, down_mbps, up_mbps) VALUES (?, ?, ?, 300, 90)",
+                    (iso(AGORA - 600), AGORA - 600, AGORA - 580))
+        con.commit()
+        con.close()
+        r = painel.api(60)
+        self.assertFalse(r["velocidade"][0]["completo"])
+        self.assertIsNone(r["velocidade_completo"])
 
 
 class VelocidadeBase(ApiBase):
@@ -500,6 +516,20 @@ class VelocidadeApiTest(VelocidadeBase):
         r = painel.api(60)
         self.assertEqual((r["velocidade_ultimo"]["epoch"], r["velocidade_ultimo"]["down"]), (AGORA - 7200, 50.0))
         self.assertEqual(len(r["velocidade"]), 1)
+
+    def test_marca_teste_completo_e_traz_o_ultimo_mesmo_fora_do_periodo(self):
+        antigo = self.velo(AGORA - 9000, down=590.0, up=95.0)
+        self.velo(AGORA - 7200, down=200.0, up=90.0)                  # rápido, mais recente
+        agora = self.velo(AGORA - 600, down=300.0, up=95.0)
+        falhou = self.velo(AGORA - 300, fim=AGORA - 280, erro="HTTP 403")
+        for vid in (antigo, agora, falhou):
+            self.sql("INSERT INTO velocidade_completo (velocidade_id, fluxos, segundos) VALUES (?, 4, 10)", (vid,))
+        self.sql("DELETE FROM velocidade_completo WHERE velocidade_id = ?", (agora,))
+        r = painel.api(60)
+        self.assertEqual([(t["epoch"], t["completo"]) for t in r["velocidade"]],
+                         [(AGORA - 600, False), (AGORA - 300, True)])
+        self.assertEqual((r["velocidade_completo"]["epoch"], r["velocidade_completo"]["down"]), (AGORA - 9000, 590.0))
+        self.assertTrue(r["velocidade_completo"]["completo"])
 
     def test_teste_com_erro_vem_com_erro_e_sem_mbps(self):
         self.velo(AGORA - 600, fim=AGORA - 570, down=280.0, erro="upload passou de 30 s")
@@ -705,3 +735,62 @@ class HandlerTest(ApiBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TesteAgoraTest(VelocidadeBase):
+    """Botão "Fazer teste completo agora": pedido por arquivo e estado do teste em andamento."""
+
+    def test_rodando_traz_o_teste_aberto_recente(self):
+        self.velo(AGORA - 3000)                                    # aberto há muito tempo: interrompido
+        vid = self.velo(AGORA - 20)
+        self.sql("INSERT INTO velocidade_completo (velocidade_id, fluxos, segundos) VALUES (?, 4, 10)", (vid,))
+        self.assertEqual(painel.api(60)["velocidade_rodando"], {"epoch": AGORA - 20, "completo": True})
+
+    def test_nada_rodando(self):
+        self.velo(AGORA - 60, down=500.0, up=90.0)
+        self.velo(AGORA - 30, fim=AGORA - 25, erro="HTTP 403")
+        self.assertIsNone(painel.api(60)["velocidade_rodando"])
+
+    def test_pedido_aparece_e_expira(self):
+        self.assertFalse(painel.api(60)["teste_pedido"])
+        painel.pedir_teste()
+        os.utime(self.pedido, (AGORA - 10, AGORA - 10))
+        self.assertTrue(painel.api(60)["teste_pedido"])
+        os.utime(self.pedido, (AGORA - 700, AGORA - 700))
+        self.assertFalse(painel.api(60)["teste_pedido"])
+
+    def test_post_exige_cabecalho_e_cria_o_pedido(self):
+        srv = painel.ThreadingHTTPServer(("127.0.0.1", 0), painel.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        url = f"http://127.0.0.1:{srv.server_address[1]}/teste-completo"
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST"))
+        self.assertEqual(e.exception.code, 403)
+        self.assertFalse(os.path.exists(self.pedido))
+        r = urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST", headers={"X-Pedido": "1"}))
+        self.assertEqual(r.status, 202)
+        self.assertTrue(os.path.exists(self.pedido))
+
+    def test_um_teste_completo_manual_por_hora(self):
+        self.assertIsNone(painel.api(60)["teste_manual_apos"])
+        vid = self.velo(AGORA - 600, fim=AGORA - 570, erro="HTTP Error 429: Too Many Requests")   # falho também conta
+        self.sql("INSERT INTO velocidade_completo (velocidade_id, fluxos, segundos) VALUES (?, 4, 10)", (vid,))
+        self.assertEqual(painel.api(60)["teste_manual_apos"], AGORA - 600 + painel.MANUAL_INTERVALO)
+        self.sql("UPDATE velocidade SET epoch = ? WHERE id = ?", (AGORA - painel.MANUAL_INTERVALO - 1, vid))
+        self.assertIsNone(painel.api(60)["teste_manual_apos"])
+
+    def test_post_recusado_logo_depois_de_um_completo(self):
+        vid = self.velo(AGORA - 600, down=590.0, up=90.0)
+        self.sql("INSERT INTO velocidade_completo (velocidade_id, fluxos, segundos) VALUES (?, 4, 10)", (vid,))
+        srv = painel.ThreadingHTTPServer(("127.0.0.1", 0), painel.H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        req = urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}/teste-completo", data=b"",
+                                     method="POST", headers={"X-Pedido": "1"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        self.assertEqual(e.exception.code, 429)
+        self.assertFalse(os.path.exists(self.pedido))

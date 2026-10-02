@@ -12,6 +12,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conexao.db")
+# pedido de teste completo para o monitor (o painel não escreve no banco); mesmo nome em monitor.py
+PEDIDO = os.path.join(os.path.dirname(DB), "pedido_teste_completo")
+PEDIDO_VALIDADE = 600   # s: o monitor descarta pedido mais velho
+# s entre testes completos pedidos pelo botão: o Cloudflare bloqueia (429, por ~1 h) quem baixa muitos GB seguidos
+MANUAL_INTERVALO = 3600
 PORT = int(os.environ.get("PORT", 8080))
 MAX_PONTOS = 600
 INTERVALO = 5           # mesmo INTERVAL do monitor.py
@@ -212,23 +217,65 @@ def nota_carga(ocioso, down, up):
 
 
 def velocidade(c, desde, ate):
-    """(testes do período em ordem, último teste bem-sucedido mesmo fora do período). Teste com erro vem sem Mbps."""
+    """(testes do período em ordem, último teste bem-sucedido e último completo bem-sucedido, mesmo fora do
+    período). Teste com erro vem sem Mbps."""
     if not tem_tabela(c, "velocidade"):
-        return [], None
+        return [], None, None
     carga = ("l.ocioso_ms, l.down_ms, l.up_ms, l.velocidade_id tem_carga" if tem_tabela(c, "latencia_carga")
              else "NULL ocioso_ms, NULL down_ms, NULL up_ms, NULL tem_carga")
     junta = "LEFT JOIN latencia_carga l ON l.velocidade_id = v.id" if tem_tabela(c, "latencia_carga") else ""
-    base = f"SELECT v.epoch, v.fim_epoch fim, v.down_mbps, v.up_mbps, v.erro, {carga} FROM velocidade v {junta}"
+    if tem_tabela(c, "velocidade_completo"):
+        compl, junta = "k.velocidade_id IS NOT NULL", junta + " LEFT JOIN velocidade_completo k ON k.velocidade_id = v.id"
+    else:
+        compl = "0"
+    base = (f"SELECT v.epoch, v.fim_epoch fim, v.down_mbps, v.up_mbps, v.erro, {compl} completo, {carga} "
+            f"FROM velocidade v {junta}")
 
     def item(r):
-        return {"epoch": r["epoch"], "fim": r["fim"], "erro": r["erro"],
+        return {"epoch": r["epoch"], "fim": r["fim"], "erro": r["erro"], "completo": bool(r["completo"]),
                 "down": None if r["erro"] else r["down_mbps"], "up": None if r["erro"] else r["up_mbps"],
                 "carga": None if r["tem_carga"] is None else
                 {"ocioso": r["ocioso_ms"], "down": r["down_ms"], "up": r["up_ms"],
                  "nota": nota_carga(r["ocioso_ms"], r["down_ms"], r["up_ms"])}}
     testes = [item(r) for r in rows(c, base + " WHERE v.epoch >= ? AND v.epoch < ? ORDER BY v.epoch", (desde, ate))]
-    ultimo = rows(c, base + " WHERE v.erro IS NULL AND v.down_mbps IS NOT NULL ORDER BY v.epoch DESC LIMIT 1")
-    return testes, item(ultimo[0]) if ultimo else None
+    ok = " WHERE v.erro IS NULL AND v.down_mbps IS NOT NULL"
+    ultimo = rows(c, base + ok + " ORDER BY v.epoch DESC LIMIT 1")
+    ultimo_compl = rows(c, base + ok + f" AND {compl} ORDER BY v.epoch DESC LIMIT 1")
+    return testes, item(ultimo[0]) if ultimo else None, item(ultimo_compl[0]) if ultimo_compl else None
+
+
+def teste_rodando(c, agora):
+    """Teste de velocidade em andamento agora, {epoch, completo}, ou None."""
+    if not tem_tabela(c, "velocidade"):
+        return None
+    compl = ("EXISTS (SELECT 1 FROM velocidade_completo k WHERE k.velocidade_id = v.id)"
+             if tem_tabela(c, "velocidade_completo") else "0")
+    r = rows(c, f"""SELECT v.epoch, {compl} completo FROM velocidade v
+                    WHERE v.fim_epoch IS NULL AND v.erro IS NULL AND v.epoch > ? ORDER BY v.epoch DESC LIMIT 1""",
+             (agora - TESTE_MAX,))
+    return {"epoch": r[0]["epoch"], "completo": bool(r[0]["completo"])} if r else None
+
+
+def proximo_manual(c, agora):
+    """Epoch a partir do qual o botão volta a pedir teste completo, ou None se já pode."""
+    if not (tem_tabela(c, "velocidade") and tem_tabela(c, "velocidade_completo")):
+        return None
+    ult = c.execute("SELECT MAX(v.epoch) FROM velocidade v JOIN velocidade_completo k ON k.velocidade_id = v.id"
+                    ).fetchone()[0]
+    return ult + MANUAL_INTERVALO if ult is not None and ult + MANUAL_INTERVALO > agora else None
+
+
+def teste_pedido(agora):
+    """Há pedido de teste completo ainda não atendido pelo monitor?"""
+    try:
+        return agora - os.path.getmtime(PEDIDO) <= PEDIDO_VALIDADE
+    except OSError:
+        return False
+
+
+def pedir_teste():
+    with open(PEDIDO, "w") as f:
+        f.write(f"{time.time():.0f}\n")
 
 
 def api(minutos=60, de=None, ate=None):
@@ -275,13 +322,17 @@ def api(minutos=60, de=None, ate=None):
         wifi = rows(c, "SELECT ssid, freq FROM wifi_info ORDER BY id DESC LIMIT 1")
         banco = banco_tamanho(c, agora)
         dias = dias_recentes(c, agora)
-        testes, ultimo_teste = velocidade(c, desde, ate)
+        testes, ultimo_teste, ultimo_completo = velocidade(c, desde, ate)
+        rodando = teste_rodando(c, agora)
+        proximo = proximo_manual(c, agora)
     finally:
         c.close()
     return {"pontos": pontos, "passo": passo, "resumo": resumo, "quedas": quedas, "falhas": falhas,
             "atual": atual, "recentes": recentes, "ultima_queda": ultima[0]["epoch"] if ultima else None,
             "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "banco": banco, "dias": dias,
-            "velocidade": testes, "velocidade_ultimo": ultimo_teste, "agora": agora, "de": desde, "ate": ate}
+            "velocidade": testes, "velocidade_ultimo": ultimo_teste,
+            "velocidade_completo": ultimo_completo, "velocidade_rodando": rodando, "teste_manual_apos": proximo,
+            "teste_pedido": teste_pedido(agora), "agora": agora, "de": desde, "ate": ate}
 
 
 class H(BaseHTTPRequestHandler):
@@ -314,6 +365,31 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        if urlparse(self.path).path != "/teste-completo":
+            self.send_error(404)
+            return
+        # cabeçalho próprio: outro site aberto no navegador não consegue mandá-lo sem permissão (CORS)
+        if self.headers.get("X-Pedido") != "1":
+            self.send_error(403)
+            return
+        try:
+            c = conectar()
+            try:
+                espera = proximo_manual(c, time.time())
+            finally:
+                c.close()
+            if espera is not None:
+                self.send_error(429, "teste completo recente")
+                return
+            pedir_teste()
+        except (OSError, sqlite3.Error) as e:
+            self.send_error(500, str(e))
+            return
+        self.send_response(202)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, *a):
         pass
@@ -398,6 +474,15 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
 .carga{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding-top:12px;border-top:1px solid var(--grid)}
 .carga svg{width:22px;height:22px;flex:none;margin-top:1px}
 .carga b{display:block}.carga .sub{font-size:13px;color:var(--muted)}.carga p{margin:2px 0;color:var(--ink2);font-size:14px}
+.plano{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:flex-end;margin-top:14px;padding-top:12px;border-top:1px solid var(--grid)}
+.plano label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink2);font-weight:600}
+.plano input{font:inherit;font-size:14px;color:var(--ink);background:var(--page);border:1px solid var(--ring);border-radius:7px;padding:5px 8px;width:7em}
+.testar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:12px}
+.testar button{font:inherit;font-size:14px;font-weight:600;border:0;border-radius:7px;padding:7px 16px;background:var(--ink);color:var(--surface);cursor:pointer}
+.testar button:disabled{opacity:.45;cursor:default}
+.testar span{font-size:13px;color:var(--muted)}
+#plres{margin-top:10px}#plres:empty{display:none}
+#plres .carga{margin-top:8px;padding-top:0;border-top:0}
 .datas{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;padding:14px 18px}
 .datas label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink2);font-weight:600}
 .datas input{font:inherit;font-size:14px;color:var(--ink);background:var(--page);border:1px solid var(--ring);border-radius:7px;padding:5px 8px}
@@ -440,6 +525,10 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
   <canvas id="c3" class="chart"></canvas><p class="vazio" id="vvazio" hidden></p>
   <div class="leg"><span><i class="ln" style="background:var(--s1)"></i>Baixar (download)</span><span><i class="ln" style="background:var(--s2)"></i>Enviar (upload)</span></div>
   <div class="carga" id="carga" hidden></div>
+  <div class="plano"><label>Plano contratado: baixar (Mbps)<input type="text" id="pdown" inputmode="decimal" placeholder="ex.: 500"></label>
+    <label>Enviar (Mbps)<input type="text" id="pup" inputmode="decimal" placeholder="ex.: 250"></label></div>
+  <div id="plres"></div>
+  <div class="testar"><button type="button" id="btest">Fazer teste completo agora</button><span id="tstat"></span></div>
   <div class="tip"></div></section>
 <section class="card"><h3>Força do sinal Wi-Fi</h3>
   <p class="cap">Quanto <b>maior</b>, melhor. Abaixo de 35% a conexão pode ficar lenta ou cair: tente ficar mais perto do roteador.</p>
@@ -600,6 +689,44 @@ function fraseCarga(n){
   const fim={Ótimo:'nem dá para perceber.',Bom:'quase não se nota.',Razoável:'chamadas de vídeo podem travar.',
     Ruim:'chamadas de vídeo e jogos ficam bem ruins.'}[n.nome];
   return `${quem}, a resposta fica ${num(n.acrescimo)} ms mais lenta: ${fim}`}
+
+let PLANO={down:null,up:null};
+try{PLANO=Object.assign(PLANO,JSON.parse(localStorage.getItem('plano')||'{}'))}catch(e){}
+const lerMbps=v=>{const n=parseFloat(String(v).replace(',','.'));return n>0?n:null};
+// faixas da Anatel: média >= 80% do contratado é o esperado; instantânea abaixo de 40% é descumprimento
+const planoCat=r=>r>=.8?'good':r>=.4?'warning':'critical';
+function plano(){
+  // só o teste completo serve para conferir o plano: o rápido (25 MB) mede a arrancada e costuma dar bem menos
+  const el=$('plres'),C=(D.velocidade||[]).filter(t=>t.completo&&(t.down!=null||t.up!=null)),vc=D.velocidade_completo;
+  const lin=(nome,k,cont,aprox)=>{if(!cont)return '';
+    const v=C.map(t=>t[k]).filter(x=>x!=null),ult=vc&&vc[k]!=null?vc[k]:null;
+    if(!v.length&&ult==null)return '';
+    const med=v.length?v.reduce((a,b)=>a+b)/v.length:null,ref=med!=null?med:ult,r=ref/cont,cat=planoCat(r);
+    const txt=r>=.8?'dentro do esperado':r>=.4?'abaixo do esperado':'muito abaixo do contratado';
+    return `<div class="carga">${icon(cat)}<div><b>${nome}: ${num(100*r)}% do plano (${txt})${aprox?' · aproximado':''}</b>`+
+      `<div class="sub">Contratado ${num(cont,cont%1?1:0)} Mbps · `+(med!=null?(v.length===1?`teste completo ${num(med)} Mbps`:
+        `média de ${v.length} testes completos no período ${num(med)} Mbps (melhor ${num(Math.max(...v))}, pior ${num(Math.min(...v))})`)
+        :`último teste completo ${num(ult)} Mbps, ${esc(quando(vc.fim||vc.epoch))}`)+`</div></div></div>`};
+  const h=lin('Baixar (download)','down',PLANO.down,false)+lin('Enviar (upload)','up',PLANO.up,true);
+  el.innerHTML=h||((PLANO.down||PLANO.up)?'<p class="vazio">Ainda não há teste completo para comparar com o plano. Ele roda 3 vezes por dia (normalmente às 9h, 15h e 21h).</p>':'');
+  if(h)el.insertAdjacentHTML('beforeend','<p class="vazio">Usa só o teste completo (3 vezes por dia, download maior): o teste rápido do gráfico costuma marcar menos que a velocidade real. O envio (upload) ainda é medido com pouco volume, então é aproximado. O esperado é receber pelo menos 80% do contratado, em média (regra da Anatel).</p>')}
+let PEDINDO=false;
+function botaoTeste(){
+  const b=$('btest'),s=$('tstat'),r=D.velocidade_rodando,fora=D.atual&&!['ok','degradado'].includes(D.atual.status);
+  const apos=D.teste_manual_apos,T=D.velocidade||[],ult=T[T.length-1],lim=ult&&ult.erro&&ult.erro.includes('429');
+  b.disabled=PEDINDO||!!r||D.teste_pedido||!!apos;
+  s.textContent=r?`Teste ${r.completo?'completo':'rápido'} rodando (começou há ${dur(D.agora-r.epoch)}). O resultado aparece aqui quando terminar.`
+    :D.teste_pedido?(fora?'Pedido feito. O teste espera a internet voltar.':'Pedido feito. O teste começa em alguns segundos.')
+    :(lim?'O último teste falhou porque o servidor de teste limitou o uso (muitos testes seguidos). Ele libera em até 1 hora. ':'')+
+    (apos?`Para não ser bloqueado pelo servidor de teste, o próximo teste completo pode ser pedido a partir das ${hm(apos)}.`
+      :'Leva cerca de 30 segundos e baixa por volta de 1 GB. Dá para pedir 1 por hora.')}
+$('btest').onclick=async()=>{PEDINDO=true;$('btest').disabled=true;
+  try{const r=await fetch('/teste-completo',{method:'POST',headers:{'X-Pedido':'1'}});if(!r.ok)throw 0;await load()}
+  catch(e){$('tstat').textContent='Não foi possível pedir o teste. Tente de novo.'}
+  finally{PEDINDO=false;if(D)botaoTeste()}};
+$('pdown').value=PLANO.down||'';$('pup').value=PLANO.up||'';
+[['pdown','down'],['pup','up']].forEach(([id,k])=>$(id).oninput=e=>{PLANO[k]=lerMbps(e.target.value);
+  try{localStorage.setItem('plano',JSON.stringify(PLANO))}catch(x){}if(D)plano()});
 function velocidade(){
   const V=(D.velocidade||[]).filter(t=>t.down!=null||t.up!=null).map(t=>({epoch:t.fim||t.epoch,down:t.down,up:t.up,status:'ok'}));
   const dif=V.slice(1).map((p,i)=>p.epoch-V[i].epoch).sort((a,b)=>a-b),med=dif.length?dif[dif.length>>1]:0;
@@ -685,7 +812,7 @@ function draw(){
   document.querySelectorAll('.tip').forEach(t=>t.style.display='none');
   hero();tiles();timeline();dias();
   lineChart($('c1'),[{k:'inet',c:'--s1',n:'até a internet'},{k:'gw',c:'--s2',n:'até o roteador'}],{un:' ms',faixas:true,janelas:janelasTeste()});
-  velocidade();
+  velocidade();plano();botaoTeste();
   lineChart($('c2'),[{k:'sinal',c:'--s1',n:'sinal'}],{un:'%',max:100});
   quedas();tecnico();
   document.querySelectorAll('canvas').forEach(c=>c._sobre&&c._sobre());   // arrasto em andamento sobrevive à atualização

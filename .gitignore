@@ -6,3 +6,6 @@ conexao.db
 conexao.db-wal
 conexao.db-shm
 conexao-*.db
+
+# pedido de teste completo do painel para o monitor
+pedido_teste_completo

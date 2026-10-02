@@ -13,7 +13,7 @@ start: ## Inicia monitor e painel em background (Docker)
 	docker compose up -d --build
 
 stop: ## Para monitor e painel
-	-docker compose down
+	-docker compose --profile painel down
 
 restart: stop start ## Reinicia monitor e painel
 
@@ -48,7 +48,7 @@ rotas: ## Diagnósticos de caminho (tracepath) das quedas falha_internet
 	@$(SQL) "select r.ts, o.status, round(o.duration_s,1) dur_s, r.alvo, json_array_length(r.saltos) saltos, r.ultimo_ok, (select json_extract(j.value,'$$.ip') from json_each(r.saltos) j where json_extract(j.value,'$$.n')=r.ultimo_ok) ultimo_ip, r.erro from rotas r left join outages o on o.id=r.outage_id order by r.epoch desc limit 30"
 
 velocidade: ## Testes de velocidade (Mbps) e latência parado/baixando/enviando
-	@$(SQL) "select v.ts, round(v.down_mbps,1) baixar, round(v.up_mbps,1) enviar, round(v.fim_epoch-v.epoch) dur_s, round(l.ocioso_ms,1) parado_ms, round(l.down_ms,1) baixando_ms, round(l.up_ms,1) enviando_ms, round(l.down_perda,1) perda_b, round(l.up_perda,1) perda_e, v.erro from velocidade v left join latencia_carga l on l.velocidade_id=v.id order by v.epoch desc limit 30"
+	@$(SQL) "select v.ts, case when k.velocidade_id is null then 'rapido' else 'completo' end tipo, round(v.down_mbps,1) baixar, round(v.up_mbps,1) enviar, round(v.fim_epoch-v.epoch) dur_s, round(l.ocioso_ms,1) parado_ms, round(l.down_ms,1) baixando_ms, round(l.up_ms,1) enviando_ms, round(l.down_perda,1) perda_b, round(l.up_perda,1) perda_e, v.erro from velocidade v left join latencia_carga l on l.velocidade_id=v.id left join velocidade_completo k on k.velocidade_id=v.id order by v.epoch desc limit 30"
 
 backup: ## Copia o banco com data/hora
 	$(PYTHON) -c "import sqlite3;sqlite3.connect('$(DB)').backup(sqlite3.connect('$(DIR)/conexao-$(shell date +%Y%m%d-%H%M%S).db'))"
