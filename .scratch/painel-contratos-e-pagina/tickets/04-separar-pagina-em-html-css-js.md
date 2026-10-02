@@ -9,10 +9,10 @@
 **Status:** ready-for-agent
 
 - [ ] A página renderiza e funciona igual a antes (conferir no navegador via `make web` e no contêiner `painel`)
-- [ ] O teste de fumaça do 03, adaptado aos arquivos novos, continua passando; ids, sintaxe do JS e tipos de conteúdo são verificados
-- [ ] Caminhos fora da lista fechada (incluindo tentativas com `..`) respondem 404; não há listagem de diretório
-- [ ] Nenhum recurso externo ou CDN é carregado; a página abre sem internet
-- [ ] A string `PAGINA` não existe mais; `AGENTS.md` descreve a nova estrutura
-- [ ] O Dockerfile copia os arquivos da página; o healthcheck do painel (`GET /api?min=1`) continua passando
-- [ ] `make restart` após editar um arquivo da página basta para ver a mudança (sem rebuild), como hoje
-- [ ] `make test` passa
+- [x] O teste de fumaça do 03, adaptado aos arquivos novos, continua passando; ids, sintaxe do JS e tipos de conteúdo são verificados
+- [x] Caminhos fora da lista fechada (incluindo tentativas com `..`) respondem 404; não há listagem de diretório
+- [x] Nenhum recurso externo ou CDN é carregado; a página abre sem internet
+- [x] A string `PAGINA` não existe mais; `AGENTS.md` descreve a nova estrutura
+- [x] O Dockerfile copia os arquivos da página; o healthcheck do painel (`GET /api?min=1`) continua passando
+- [x] `make restart` após editar um arquivo da página basta para ver a mudança (sem rebuild), como hoje
+- [x] `make test` passa

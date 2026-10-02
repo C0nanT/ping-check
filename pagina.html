@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Minha internet</title>
+<link rel="stylesheet" href="/pagina.css">
+</head><body><main id="m">
+<header>
+  <div><h1>Minha internet</h1><div class="upd" id="upd">carregando…</div></div>
+  <div class="seg" id="per" role="group" aria-label="Período">
+    <button data-min="60">Última hora</button><button data-min="360">6 horas</button><button data-min="1440">24 horas</button><button data-min="10080">7 dias</button><button id="bdatas" aria-expanded="false">Escolher datas</button>
+  </div>
+</header>
+<form class="card datas" id="datas" hidden>
+  <label>De<span class="dh"><input type="date" id="dde"><input type="text" id="hde" inputmode="numeric" maxlength="5" placeholder="hh:mm" aria-label="Hora de início"></span></label>
+  <label>Até<span class="dh"><input type="date" id="date"><input type="text" id="hate" inputmode="numeric" maxlength="5" placeholder="hh:mm" aria-label="Hora de fim"></span></label>
+  <button type="submit">Ver</button>
+  <span class="erro" id="derro" role="alert"></span>
+</form>
+<section class="card hero" id="hero"></section>
+<div class="tiles" id="tiles"></div>
+<section class="card"><h3>Como foi o período</h3>
+  <p class="cap">Cada cor mostra como a internet estava naquele momento. Passe o mouse para ver o horário. Clique e arraste para ver um trecho de perto.</p>
+  <canvas id="tl"></canvas>
+  <div class="leg"><span><i style="background:var(--good)"></i>Funcionando</span><span><i style="background:var(--warning)"></i>Instável ou lenta</span><span><i style="background:var(--critical)"></i>Sem conexão</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
+  <div class="tip"></div></section>
+<section class="card"><h3 id="dias-t">Últimos dias</h3>
+  <p class="cap">Cada quadrado é um dia, com hoje à direita. A cor mostra quanto do dia a internet funcionou. Este quadro não muda com o período escolhido lá em cima.</p>
+  <div class="dias" id="dias"></div><div class="diasx"><span id="dias0"></span><span id="dias1"></span></div>
+  <div class="leg"><span><i style="background:var(--good)"></i>Funcionou 99% do tempo ou mais</span><span><i style="background:var(--warning)"></i>De 95% a 99%</span><span><i style="background:var(--critical)"></i>Menos de 95%</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
+  <div class="tip"></div></section>
+<section class="card"><h3>Rapidez</h3>
+  <p class="cap">Tempo que um sinal leva para ir e voltar, em milissegundos (ms). Quanto <b>menor</b>, melhor: abaixo de 50 ms é ótimo, acima de 150 ms a internet parece lenta.</p>
+  <canvas id="c1" class="chart"></canvas>
+  <div class="leg"><span><i class="ln" style="background:var(--s1)"></i>Até a internet</span><span><i class="ln" style="background:var(--s2)"></i>Até o roteador (dentro de casa)</span><span><i style="background:var(--critical-bg);box-shadow:inset 0 0 0 1px var(--critical)"></i>Sem conexão</span><span><i style="background:var(--band);box-shadow:inset 0 0 0 1px var(--axis)"></i>Teste de velocidade (a resposta fica mais lenta enquanto ele roda)</span></div>
+  <div class="tip"></div></section>
+<section class="card"><h3>Velocidade</h3>
+  <p class="cap">Quanto a internet consegue baixar e enviar, em megabits por segundo (Mbps). Quanto <b>maior</b>, melhor. O monitor testa sozinho de tempos em tempos (normalmente a cada 30 minutos; cada teste gasta cerca de 35 MB).</p>
+  <canvas id="c3" class="chart"></canvas><p class="vazio" id="vvazio" hidden></p>
+  <div class="leg"><span><i class="ln" style="background:var(--s1)"></i>Baixar (download)</span><span><i class="ln" style="background:var(--s2)"></i>Enviar (upload)</span></div>
+  <div class="carga" id="carga" hidden></div>
+  <div class="plano"><label>Plano contratado: baixar (Mbps)<input type="text" id="pdown" inputmode="decimal" placeholder="ex.: 500"></label>
+    <label>Enviar (Mbps)<input type="text" id="pup" inputmode="decimal" placeholder="ex.: 250"></label></div>
+  <div id="plres"></div>
+  <div class="testar"><button type="button" id="btest">Fazer teste completo agora</button><span id="tstat"></span></div>
+  <div class="tip"></div></section>
+<section class="card"><h3>Força do sinal Wi-Fi</h3>
+  <p class="cap">Quanto <b>maior</b>, melhor. Abaixo de 35% a conexão pode ficar lenta ou cair: tente ficar mais perto do roteador.</p>
+  <canvas id="c2" class="chart"></canvas>
+  <div class="tip"></div></section>
+<section class="card"><h3>Quando a conexão falhou</h3><p class="cap" id="qcap"></p><ul class="list" id="q"></ul></section>
+<section class="card"><details><summary>Detalhes técnicos</summary><div id="tec"></div></details></section>
+</main>
+<script src="/pagina.js"></script></body></html>

@@ -8,7 +8,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY monitor.py painel.py ./
+COPY monitor.py painel.py pagina.html pagina.css pagina.js ./
 
 # Bloqueia suspensão (inclusive ao fechar a tampa) enquanto o container roda.
 # O polkit do host só deixa root bloquear suspensão de fora de uma sessão,
