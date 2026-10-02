@@ -194,6 +194,17 @@ def amostras_recentes(c):
         ORDER BY epoch DESC LIMIT 12""", (TESTE_MAX * 3, TESTE_MAX, TESTE_FOLGA))]
 
 
+def janelas_teste(c, desde, ate):
+    """[[ini, fim]] dos testes de velocidade cuja janela toca [desde, ate), com TESTE_MAX (teste sem fim gravado)
+    e TESTE_FOLGA aplicados: a mesma janela que amostras_recentes usa. Inclui teste iniciado antes de `desde`."""
+    if not tem_tabela(c, "velocidade"):
+        return []
+    fim = "COALESCE(fim_epoch, epoch + ?) + ?"
+    return [[r["epoch"], r["fim"]] for r in rows(
+        c, f"SELECT epoch, {fim} fim FROM velocidade WHERE epoch < ? AND {fim} >= ? ORDER BY epoch",
+        (TESTE_MAX, TESTE_FOLGA, ate, TESTE_MAX, TESTE_FOLGA, desde))]
+
+
 def classificar_acrescimo(ms):
     """Nota da latência sob carga pelo acréscimo (ms) sobre a latência parada; limites de testes públicos de bufferbloat."""
     if ms < 30:
@@ -325,6 +336,7 @@ def api(minutos=60, de=None, ate=None):
         testes, ultimo_teste, ultimo_completo = velocidade(c, desde, ate)
         rodando = teste_rodando(c, agora)
         proximo = proximo_manual(c, agora)
+        janelas = janelas_teste(c, desde, ate)
     finally:
         c.close()
     return {"pontos": pontos, "passo": passo, "resumo": resumo, "quedas": quedas, "falhas": falhas,
@@ -332,7 +344,10 @@ def api(minutos=60, de=None, ate=None):
             "inicio_atual": inicio_atual, "wifi": wifi[0] if wifi else None, "banco": banco, "dias": dias,
             "velocidade": testes, "velocidade_ultimo": ultimo_teste,
             "velocidade_completo": ultimo_completo, "velocidade_rodando": rodando, "teste_manual_apos": proximo,
-            "teste_pedido": teste_pedido(agora), "agora": agora, "de": desde, "ate": ate}
+            "teste_pedido": teste_pedido(agora), "agora": agora, "de": desde, "ate": ate,
+            "intervalo": INTERVALO, "parado_apos": PARADO_APOS, "status_queda": list(CAIU),
+            "teste_max": TESTE_MAX, "teste_folga": TESTE_FOLGA, "periodo_max": MAX_PERIODO, "n_dias": DIAS,
+            "janelas_teste": janelas}
 
 
 class H(BaseHTTPRequestHandler):
@@ -467,7 +482,7 @@ table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;font-va
 td,th{text-align:left;padding:5px 8px;border-bottom:1px solid var(--grid)}
 th{color:var(--ink2);font-weight:600}td.n,th.n{text-align:right}
 code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4px}
-.dias{display:grid;grid-template-columns:repeat(30,minmax(0,1fr));gap:3px}
+.dias{display:grid;gap:3px}
 .dias i{display:block;aspect-ratio:1;max-height:34px;border-radius:3px;cursor:default}
 .dias i:hover{outline:2px solid var(--ink);outline-offset:1px}
 .vazio{color:var(--muted);font-size:14px;margin:6px 0 0}
@@ -510,7 +525,7 @@ code{font-size:13px;background:var(--nodata-bg);padding:1px 5px;border-radius:4p
   <canvas id="tl"></canvas>
   <div class="leg"><span><i style="background:var(--good)"></i>Funcionando</span><span><i style="background:var(--warning)"></i>Instável ou lenta</span><span><i style="background:var(--critical)"></i>Sem conexão</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
   <div class="tip"></div></section>
-<section class="card"><h3>Últimos 30 dias</h3>
+<section class="card"><h3 id="dias-t">Últimos dias</h3>
   <p class="cap">Cada quadrado é um dia, com hoje à direita. A cor mostra quanto do dia a internet funcionou. Este quadro não muda com o período escolhido lá em cima.</p>
   <div class="dias" id="dias"></div><div class="diasx"><span id="dias0"></span><span id="dias1"></span></div>
   <div class="leg"><span><i style="background:var(--good)"></i>Funcionou 99% do tempo ou mais</span><span><i style="background:var(--warning)"></i>De 95% a 99%</span><span><i style="background:var(--critical)"></i>Menos de 95%</span><span><i style="background:var(--nodata)"></i>Sem medição (monitor desligado)</span></div>
@@ -543,7 +558,7 @@ const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num=(x,d=0)=>x==null?'–':x.toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
 const avg=a=>{a=a.filter(x=>x!=null);return a.length?a.reduce((s,x)=>s+x,0)/a.length:null};
-const caiu=s=>s!=='ok'&&s!=='degradado';
+const caiu=s=>D.status_queda.includes(s)||!(s in ST);   // lista do servidor; status que a página não conhece também é queda
 const cat=s=>s==='ok'?'good':s==='degradado'?'warning':'critical';
 
 const ST={
@@ -579,9 +594,7 @@ const pctSinal=dbm=>dbm==null?null:Math.max(0,Math.min(100,2*(dbm+100)));
 const sinal=p=>p==null?null:p>=70?['Excelente','good']:p>=50?['Bom','good']:p>=35?['Razoável','warning']:['Fraco','critical'];
 const banda=f=>{const m=parseInt(f);return m>=5900?'6 GHz':m>=4900?'5 GHz':'2,4 GHz'};
 
-const TESTE_MAX=90;   // mesmo TESTE_MAX do painel.py: teste sem fim gravado
-const janelasTeste=()=>(D.velocidade||[]).map(t=>[t.epoch,t.fim??Math.min(D.agora,t.epoch+TESTE_MAX)]);
-const emTeste=(e,J)=>J.some(([a,b])=>e>=a&&e<=b+10);
+const emTeste=(e,J)=>J.some(([a,b])=>e>=a&&e<=b);   // J = D.janelas_teste: o servidor já aplica TESTE_MAX e a folga
 
 let D=null,MIN=60,FAIXA=null;   // FAIXA = {de,ate} (epoch) escolhida em "Escolher datas" ou arrastando; aí MIN não vale
 try{MIN=+localStorage.getItem('periodo')||60}catch(e){}
@@ -603,7 +616,7 @@ function nice(v){const s=v/4,p=10**Math.floor(Math.log10(s)),m=s/p;return(m<=1?1
 
 function hero(){
   const a=D.atual;let k,t,x,desde='';
-  if(!a||D.agora-a.epoch>60){k='muted';t='O monitor não está medindo';
+  if(!a||D.agora-a.epoch>D.parado_apos){k='muted';t='O monitor não está medindo';
     x='Nenhuma medição recente'+(a?' (a última foi '+quando(a.epoch)+')':'')+'. Para voltar a monitorar, rode make start no terminal.'}
   else{let s=a.status;
     if(!caiu(s))s=D.recentes.filter(r=>r==='degradado').length>=3?'degradado':'ok';  // 1 amostra ruim isolada não muda o resumo
@@ -712,7 +725,7 @@ function plano(){
   if(h)el.insertAdjacentHTML('beforeend','<p class="vazio">Usa só o teste completo (3 vezes por dia, download maior): o teste rápido do gráfico costuma marcar menos que a velocidade real. O envio (upload) ainda é medido com pouco volume, então é aproximado. O esperado é receber pelo menos 80% do contratado, em média (regra da Anatel).</p>')}
 let PEDINDO=false;
 function botaoTeste(){
-  const b=$('btest'),s=$('tstat'),r=D.velocidade_rodando,fora=D.atual&&!['ok','degradado'].includes(D.atual.status);
+  const b=$('btest'),s=$('tstat'),r=D.velocidade_rodando,fora=D.atual&&caiu(D.atual.status);
   const apos=D.teste_manual_apos,T=D.velocidade||[],ult=T[T.length-1],lim=ult&&ult.erro&&ult.erro.includes('429');
   b.disabled=PEDINDO||!!r||D.teste_pedido||!!apos;
   s.textContent=r?`Teste ${r.completo?'completo':'rápido'} rodando (começou há ${dur(D.agora-r.epoch)}). O resultado aparece aqui quando terminar.`
@@ -763,13 +776,14 @@ function horas(s){return s<3600?Math.round(s/60)+' min':num(s/3600,s<36000?1:0)+
 function diaInfo(d){const [a,m,dd]=d.dia.split('-').map(Number),dt=new Date(a,m-1,dd),hoje=d===D.dias[D.dias.length-1];
   const nome=hoje?'Hoje':dt.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit'});
   if(!d.n)return{k:'nodata',nome,linhas:['Nenhuma medição neste dia']};
-  const up=100*(d.n-d.fora)/d.n,k=upCat(up),med=d.n*5,
+  const up=100*(d.n-d.fora)/d.n,k=upCat(up),med=d.n*D.intervalo,
     total=hoje?Math.max(med,D.agora-dt.getTime()/1000):86400;
   return{k,nome,linhas:[`${num(up,up===100?0:1)}% do tempo funcionando`,
-    d.quedas?`Caiu ${d.quedas} ${d.quedas===1?'vez':'vezes'} · ${dur(d.fora*5)} fora do ar`:(d.fora?`${dur(d.fora*5)} fora do ar`:'Nenhuma queda'),
+    d.quedas?`Caiu ${d.quedas} ${d.quedas===1?'vez':'vezes'} · ${dur(d.fora*D.intervalo)} fora do ar`:(d.fora?`${dur(d.fora*D.intervalo)} fora do ar`:'Nenhuma queda'),
     `Medido ${horas(med)} de ${horas(total)}`+(hoje?' até agora':'')]}}
 function dias(){
   const el=$('dias'),X=D.dias.map(diaInfo);
+  el.style.gridTemplateColumns=`repeat(${D.n_dias},minmax(0,1fr))`;$('dias-t').textContent=`Últimos ${D.n_dias} dias`;
   el.innerHTML=X.map((x,i)=>`<i data-i="${i}" style="background:var(--${x.k})" aria-label="${esc(x.nome+': '+DIA_ST[x.k]+'. '+x.linhas.join('. '))}"></i>`).join('');
   const f=d=>{const [a,m,dd]=d.split('-');return dd+'/'+m};
   $('dias0').textContent=f(D.dias[0].dia);$('dias1').textContent='hoje';
@@ -793,7 +807,7 @@ function tecnico(){
   if(vu)M.push(['Último teste: baixar (download)',vu.down,' Mbps'],['Último teste: enviar (upload)',vu.up,' Mbps']);
   if(c)M.push(['Último teste: resposta parada (mediana)',c.ocioso,' ms'],['Último teste: resposta baixando (mediana)',c.down,' ms'],
     ['Último teste: resposta enviando (mediana)',c.up,' ms']);
-  $('tec').innerHTML=`<p>A cada 5 segundos o monitor envia sinais (ping) para o roteador e para dois servidores na internet (Cloudflare e Google), testa o DNS e lê a força do sinal Wi-Fi.
+  $('tec').innerHTML=`<p>A cada ${D.intervalo} segundos o monitor envia sinais (ping) para o roteador e para dois servidores na internet (Cloudflare e Google), testa o DNS e lê a força do sinal Wi-Fi.
     Se o roteador não responde, o problema está dentro de casa; se o roteador responde mas a internet não, o problema é da operadora.
     “Instável” significa que algum pacote se perdeu ou que a internet demorou mais de 150 ms nos dois servidores (Cloudflare e Google); se só um deles estiver lento, a internet não é considerada instável.</p>
     <div class="tab"><table><tr><th>Medição (média no período)</th><th class="n">Valor</th></tr>${M.map(([l,v,u,d])=>`<tr><td>${l}</td><td class="n">${num(v,d||1)}${u}</td></tr>`).join('')}</table></div>
@@ -811,7 +825,7 @@ function draw(){
     p.perda=Math.max(p.gwl||0,p.cfl||0,p.ggl||0);p.sinal=pctSinal(p.dbm)});
   document.querySelectorAll('.tip').forEach(t=>t.style.display='none');
   hero();tiles();timeline();dias();
-  lineChart($('c1'),[{k:'inet',c:'--s1',n:'até a internet'},{k:'gw',c:'--s2',n:'até o roteador'}],{un:' ms',faixas:true,janelas:janelasTeste()});
+  lineChart($('c1'),[{k:'inet',c:'--s1',n:'até a internet'},{k:'gw',c:'--s2',n:'até o roteador'}],{un:' ms',faixas:true,janelas:D.janelas_teste});
   velocidade();plano();botaoTeste();
   lineChart($('c2'),[{k:'sinal',c:'--s1',n:'sinal'}],{un:'%',max:100});
   quedas();tecnico();
@@ -885,14 +899,13 @@ $('bdatas').onclick=()=>{const abrir=$('datas').hidden;abreDatas(abrir);if(!abri
   const agora=Date.now()/1000;$('dde').max=dataLocal(agora);$('derro').textContent='';
   if(D){$('dde').value=dataLocal(D.de);$('hde').value=horaLocal(D.de);$('date').value=dataLocal(D.ate);$('hate').value=horaLocal(D.ate)}
   $('dde').focus()};
-const MAX_DIAS=30;   // mesmo MAX_PERIODO do painel.py
 $('datas').onsubmit=ev=>{ev.preventDefault();
   const hde=hora24($('hde').value),hate=hora24($('hate').value);
   if(hde)$('hde').value=hde;if(hate)$('hate').value=hate;
   const vazia=!$('dde').value||!$('date').value,de=epochLocal($('dde').value,hde||''),ate=epochLocal($('date').value,hate||''),agora=Date.now()/1000;
   const erro=vazia?'Preencha as duas datas.':!hde||!hate?'Hora inválida: use o formato 14:30.'
     :isNaN(de)||isNaN(ate)?'Preencha as duas datas.':de>=agora?'O início precisa ser antes de agora.'
-    :de>=ate?'O início precisa ser antes do fim.':ate-de>MAX_DIAS*86400?`Escolha no máximo ${MAX_DIAS} dias.`:'';
+    :de>=ate?'O início precisa ser antes do fim.':ate-de>D.periodo_max?`Escolha no máximo ${D.periodo_max/86400} dias.`:'';
   $('derro').textContent=erro;if(erro)return;
   escolheFaixa(de,ate)};
 ['tl','c1','c2','c3'].forEach(id=>hover($(id)));

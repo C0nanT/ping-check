@@ -633,6 +633,62 @@ class JanelaTesteTest(VelocidadeBase):
         self.assertEqual(r["atual"]["status"], "degradado")
 
 
+class ConstantesApiTest(VelocidadeBase):
+    """Valores que a página recebe da API em vez de redeclarar, e as janelas de teste que ela sombreia."""
+
+    def test_campos_de_constantes(self):
+        r = painel.api(60)
+        self.assertEqual(r["intervalo"], painel.INTERVALO)
+        self.assertEqual(r["parado_apos"], painel.PARADO_APOS)
+        self.assertEqual(r["status_queda"], list(painel.CAIU))
+        self.assertEqual(r["teste_max"], painel.TESTE_MAX)
+        self.assertEqual(r["teste_folga"], painel.TESTE_FOLGA)
+        self.assertEqual(r["periodo_max"], painel.MAX_PERIODO)
+        self.assertEqual(r["n_dias"], painel.DIAS)
+        self.assertEqual(len(r["dias"]), r["n_dias"])
+
+    def test_janela_aplica_fim_e_folga(self):
+        self.velo(AGORA - 300, fim=AGORA - 260, down=100.0, up=10.0)
+        self.assertEqual(painel.api(60)["janelas_teste"],
+                         [[AGORA - 300, AGORA - 260 + painel.TESTE_FOLGA]])
+
+    def test_janela_sem_fim_usa_teste_max(self):
+        self.velo(AGORA - 30)
+        self.assertEqual(painel.api(60)["janelas_teste"],
+                         [[AGORA - 30, AGORA - 30 + painel.TESTE_MAX + painel.TESTE_FOLGA]])
+
+    def test_teste_iniciado_antes_do_periodo_com_janela_dentro_aparece(self):
+        de, ate = AGORA - 600, AGORA - 300
+        self.velo(de - 20, fim=de + 20, down=100.0, up=10.0)
+        r = painel.api(de=de, ate=ate)
+        self.assertEqual(r["velocidade"], [])
+        self.assertEqual(r["janelas_teste"], [[de - 20, de + 20 + painel.TESTE_FOLGA]])
+
+    def test_teste_cuja_janela_termina_antes_do_periodo_nao_aparece(self):
+        de, ate = AGORA - 600, AGORA - 300
+        self.velo(de - 100, fim=de - 60, down=100.0, up=10.0)
+        self.velo(ate + 10, fim=ate + 50, down=100.0, up=10.0)
+        self.assertEqual(painel.api(de=de, ate=ate)["janelas_teste"], [])
+
+    def test_banco_antigo_tem_campos_novos(self):
+        con = sqlite3.connect(self.db)
+        for n in ("velocidade", "latencia_carga", "velocidade_completo", "rotas"):
+            con.execute(f"DROP TABLE {n}")
+        con.commit()
+        con.close()
+        r = painel.api(60)
+        self.assertEqual(r["janelas_teste"], [])
+        self.assertEqual(r["status_queda"], list(painel.CAIU))
+
+    def test_janelas_e_recentes_usam_a_mesma_regra(self):
+        self.velo(AGORA - 50, fim=AGORA - 10, down=100.0, up=10.0)
+        self.amostra(AGORA - 5, status="degradado")     # dentro da folga: sumiria de recentes
+        r = painel.api(60)
+        a, b = r["janelas_teste"][0]
+        self.assertTrue(a <= AGORA - 5 <= b)
+        self.assertEqual(r["recentes"], [])
+
+
 class PeriodoTest(unittest.TestCase):
     def test_ultimos_minutos(self):
         self.assertEqual(painel.periodo(AGORA, 60), (AGORA - 3600, AGORA))

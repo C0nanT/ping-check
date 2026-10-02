@@ -8,10 +8,10 @@
 
 **Status:** ready-for-agent
 
-- [ ] `/api` devolve os campos novos, sem remover nem renomear nenhum campo existente
-- [ ] O JS não contém mais os literais `5` (intervalo), `60` (parado), `30` (dias/período), `TESTE_MAX=90` nem `+10`; usa os campos da API
-- [ ] Um status desconhecido conta como queda na UI (via lista enviada), igual ao servidor
-- [ ] Um teste de velocidade iniciado antes de `de`, com janela que alcança o período, aparece nas janelas enviadas e fica sombreado no gráfico de Rapidez
-- [ ] Banco antigo (sem tabelas novas) continua respondendo, com os campos novos presentes (`BancoAntigoTest`)
-- [ ] Teste de regressão para as janelas e para o campo de status de queda; `make test` passa
+- [x] `/api` devolve os campos novos, sem remover nem renomear nenhum campo existente
+- [x] O JS não contém mais os literais `5` (intervalo), `60` (parado), `30` (dias/período), `TESTE_MAX=90` nem `+10`; usa os campos da API
+- [x] Um status desconhecido conta como queda na UI (via lista enviada), igual ao servidor
+- [x] Um teste de velocidade iniciado antes de `de`, com janela que alcança o período, aparece nas janelas enviadas e fica sombreado no gráfico de Rapidez
+- [x] Banco antigo (sem tabelas novas) continua respondendo, com os campos novos presentes (`BancoAntigoTest`)
+- [x] Teste de regressão para as janelas e para o campo de status de queda; `make test` passa
 - [ ] Conferido no navegador (`make web`): cartões de dia, "monitor não está medindo", seletor de datas e gráfico de Rapidez se comportam como antes
